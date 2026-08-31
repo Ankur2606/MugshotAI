@@ -52,24 +52,26 @@ export class SerpApiLens implements SearchProvider {
     return json.image_id;
   }
 
-  async search(image: Uint8Array, mime: string): Promise<SearchOutcome> {
-    if (!this.configured()) throw new Error("SERPAPI_API_KEY is not set.");
-
-    const imageId = await this.uploadImage(image, mime);
-
+  private async lensQuery(
+    imageId: string,
+    type: string | null,
+  ): Promise<
+    Array<{ title?: string; link?: string; source?: string; thumbnail?: string; image?: string }>
+  > {
     const params = new URLSearchParams({
       engine: "google_lens",
       image_id: imageId,
-      type: "visual_matches",
       api_key: this.key,
     });
+    if (type) params.set("type", type);
+
     const res = await fetch(`https://serpapi.com/search?${params.toString()}`);
     const text = await res.text();
     if (!res.ok) {
       throw new Error(`SerpApi Lens search failed (${res.status}): ${text.slice(0, 300)}`);
     }
 
-    const json = JSON.parse(text) as {
+    let json: {
       error?: string;
       visual_matches?: Array<{
         title?: string;
@@ -79,9 +81,28 @@ export class SerpApiLens implements SearchProvider {
         image?: string;
       }>;
     };
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw new Error(`SerpApi Lens returned non-JSON: ${text.slice(0, 300)}`);
+    }
     if (json.error) throw new Error(`SerpApi Lens: ${json.error}`);
+    return json.visual_matches ?? [];
+  }
 
-    const raw = json.visual_matches ?? [];
+  async search(image: Uint8Array, mime: string): Promise<SearchOutcome> {
+    if (!this.configured()) throw new Error("SERPAPI_API_KEY is not set.");
+
+    const imageId = await this.uploadImage(image, mime);
+
+    // The default response type already carries visual_matches. If it comes
+    // back empty we ask for that section explicitly once, since SerpApi has
+    // shipped both shapes and an empty Adjudication station is worse than
+    // spending a second search.
+    let raw = await this.lensQuery(imageId, null);
+    if (raw.length === 0) {
+      raw = await this.lensQuery(imageId, "visual_matches");
+    }
     const candidates: Candidate[] = raw
       .filter((m) => m.link && (m.image || m.thumbnail))
       .map((m) => ({
