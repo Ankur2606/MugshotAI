@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Specimen, type Probe } from "./Specimen";
+import { GateIntro } from "./GateIntro";
+import { DepthField } from "./DepthField";
+import { ScatterText } from "./ScatterText";
 import { HashStrip } from "./HashStrip";
 import { CalibrationScale } from "./CalibrationScale";
 import { Station } from "./Station";
@@ -328,8 +331,11 @@ export function Docket() {
     : 0;
 
   return (
-    <div className="mx-auto max-w-[1180px] px-6 pb-32 sm:px-10">
-      <Masthead status={status} />
+    <>
+      <GateIntro />
+      <DepthField />
+      <div className="relative z-10 mx-auto max-w-[1180px] px-6 pb-32 sm:px-10">
+        <Masthead status={status} />
 
       <Station
         index="I"
@@ -628,7 +634,8 @@ export function Docket() {
           </div>
         )}
       </Station>
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -750,7 +757,7 @@ function Masthead({ status }: { status: Status | null }) {
         <div>
           <span className="eyebrow">face → post → chain</span>
           <h1 className="mt-4 font-display text-[clamp(44px,7vw,86px)] font-normal leading-[0.92] tracking-[-0.02em]">
-            Facechain
+            <ScatterText text="Facechain" />
           </h1>
           <p className="mt-5 max-w-lg text-[15px] leading-relaxed text-dim">
             A face is scanned, traced to where it appears on the public web, and the finding is

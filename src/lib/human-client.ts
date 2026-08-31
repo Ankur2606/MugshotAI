@@ -38,21 +38,37 @@ const config: Partial<Config> = {
 let instance: Human | null = null;
 let loading: Promise<Human> | null = null;
 
+// Several components watch the load (the gate ties its doors to it, the
+// specimen station gates its buttons on it), so progress goes through a
+// subscriber set rather than a single callback: late subscribers immediately
+// hear the latest stage.
+let lastStage = "cold";
+const listeners = new Set<(msg: string) => void>();
+
+function announce(msg: string) {
+  lastStage = msg;
+  for (const l of listeners) l(msg);
+}
+
 export function loadEngine(onProgress?: (msg: string) => void): Promise<Human> {
+  if (onProgress) {
+    listeners.add(onProgress);
+    onProgress(lastStage);
+  }
   if (instance) return Promise.resolve(instance);
   if (loading) return loading;
 
   loading = (async () => {
-    onProgress?.("loading runtime");
+    announce("loading runtime");
     // next.config.ts aliases this specifier to Human's browser ESM bundle;
     // left alone it resolves to the Node build and drags in tfjs-node.
     const { default: HumanCtor } = await import("@vladmandic/human");
     const human = new HumanCtor(config);
-    onProgress?.("loading models");
+    announce("loading models");
     await human.load();
-    onProgress?.("warming up");
+    announce("warming up");
     await human.warmup();
-    onProgress?.("ready");
+    announce("ready");
     instance = human;
     return human;
   })();
