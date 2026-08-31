@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { ConsoleButton } from "./ConsoleButton";
 import {
   frameToJpeg,
   loadEngine,
@@ -16,6 +17,8 @@ export type Probe = {
   capturedAt: number;
   origin: "camera" | "file";
 };
+
+const EASE = [0.22, 1, 0.36, 1] as const;
 
 /**
  * Station I. Either mode ends in the same place: one JPEG and one descriptor.
@@ -41,6 +44,8 @@ export function Specimen({
   const [cameraOn, setCameraOn] = useState(false);
   const [live, setLive] = useState<FaceReading | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [flash, setFlash] = useState(false);
+  const reduced = useReducedMotion();
 
   useEffect(() => {
     loadEngine(setEngine).catch((e) =>
@@ -137,6 +142,9 @@ export function Specimen({
       setNote("No face in that frame. Move into the light and try again.");
       return;
     }
+    // the shutter fires only once the frame is known good — a flash on a
+    // failed capture would lie about what happened
+    if (!reduced) setFlash(true);
     const blob = await frameToJpeg(video);
     onProbe({
       blob,
@@ -146,7 +154,7 @@ export function Specimen({
       origin: "camera",
     });
     stopCamera();
-  }, [onProbe, stopCamera]);
+  }, [onProbe, stopCamera, reduced]);
 
   const takeFile = useCallback(
     async (file: File) => {
@@ -176,8 +184,16 @@ export function Specimen({
 
   const shown = probe?.reading ?? live;
 
+  // the housing brackets tell the station's state at a glance:
+  // hairline at rest, safelight while the detector runs, verdict once held
+  const bracketColor = probe
+    ? "var(--verdict)"
+    : cameraOn
+      ? "var(--amber)"
+      : "var(--rule-hi)";
+
   return (
-    <div className="grid gap-8 md:grid-cols-[320px_1fr]">
+    <div className="grid gap-8 md:grid-cols-[minmax(280px,380px)_1fr]">
       {/* viewport */}
       <div>
         <div className="relative aspect-[4/3] overflow-hidden border border-rule bg-black">
@@ -205,9 +221,34 @@ export function Specimen({
             </>
           )}
 
+          {/* corner brackets on the housing, echoing the detector's marks inside */}
+          {(
+            [
+              "left-1 top-1 border-l border-t",
+              "right-1 top-1 border-r border-t",
+              "bottom-1 left-1 border-b border-l",
+              "bottom-1 right-1 border-b border-r",
+            ] as const
+          ).map((pos) => (
+            <motion.span
+              key={pos}
+              aria-hidden
+              className={`pointer-events-none absolute z-10 h-3.5 w-3.5 ${pos}`}
+              initial={false}
+              animate={{ borderColor: bracketColor }}
+              transition={{ duration: 0.4, ease: EASE }}
+            />
+          ))}
+
           {!cameraOn && !probe && (
             <div className="absolute inset-0 grid place-items-center">
-              <span className="eyebrow">viewport idle</span>
+              <motion.span
+                className="eyebrow"
+                animate={reduced ? undefined : { opacity: [0.45, 1, 0.45] }}
+                transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+              >
+                viewport idle
+              </motion.span>
             </div>
           )}
 
@@ -219,52 +260,64 @@ export function Specimen({
               transition={{ duration: 4.5, repeat: Infinity, ease: "easeInOut" }}
             />
           )}
+
+          {/* the shutter: one bone flash over the glass, then the held still */}
+          <AnimatePresence>
+            {flash && (
+              <motion.div
+                aria-hidden
+                className="pointer-events-none absolute inset-0 z-20"
+                style={{ background: "var(--bone)" }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: [0, 0.9, 0] }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.26, ease: EASE, times: [0, 0.35, 1] }}
+                onAnimationComplete={() => setFlash(false)}
+              />
+            )}
+          </AnimatePresence>
         </div>
 
         <div className="mt-3 flex flex-wrap gap-2">
           {!probe && !cameraOn && (
-            <button
+            <ConsoleButton
+              variant="primary"
               onClick={() => void startCamera()}
               disabled={engine !== "ready"}
-              className="border border-amber px-3 py-1.5 font-mono text-[11px] uppercase tracking-widest text-amber transition-colors hover:bg-amber hover:text-ink disabled:cursor-not-allowed disabled:border-rule disabled:text-faint"
+              className="w-full sm:w-auto"
             >
               Start camera
-            </button>
+            </ConsoleButton>
           )}
           {cameraOn && !probe && (
             <>
-              <button
+              <ConsoleButton
+                variant="primary"
+                filled
                 onClick={() => void capture()}
                 disabled={!live}
-                className="border border-amber bg-amber px-3 py-1.5 font-mono text-[11px] uppercase tracking-widest text-ink transition-opacity hover:opacity-85 disabled:cursor-not-allowed disabled:border-rule disabled:bg-transparent disabled:text-faint"
+                className="w-full sm:w-auto"
               >
                 Capture frame
-              </button>
-              <button
-                onClick={stopCamera}
-                className="border border-rule px-3 py-1.5 font-mono text-[11px] uppercase tracking-widest text-dim hover:border-rule-hi hover:text-bone"
-              >
+              </ConsoleButton>
+              <ConsoleButton variant="ghost" onClick={stopCamera}>
                 Stop
-              </button>
+              </ConsoleButton>
             </>
           )}
           {!probe && (
-            <button
+            <ConsoleButton
+              variant="quiet"
               onClick={() => fileRef.current?.click()}
               disabled={engine !== "ready"}
-              className="border border-rule px-3 py-1.5 font-mono text-[11px] uppercase tracking-widest text-dim hover:border-rule-hi hover:text-bone disabled:cursor-not-allowed disabled:text-faint"
             >
               Upload photo
-            </button>
+            </ConsoleButton>
           )}
           {probe && (
-            <button
-              onClick={() => onProbe(null)}
-              disabled={busy}
-              className="border border-rule px-3 py-1.5 font-mono text-[11px] uppercase tracking-widest text-dim hover:border-rule-hi hover:text-bone disabled:cursor-not-allowed disabled:text-faint"
-            >
+            <ConsoleButton variant="ghost" onClick={() => onProbe(null)} disabled={busy}>
               Discard specimen
-            </button>
+            </ConsoleButton>
           )}
           <input
             ref={fileRef}
@@ -282,31 +335,36 @@ export function Specimen({
 
       {/* readout */}
       <dl className="grid grid-cols-2 gap-x-8 gap-y-4 self-start sm:grid-cols-3">
-        <Readout label="engine" value={engine} tone={engine === "ready" ? "ok" : "wait"} />
+        <Readout label="engine" value={engine} tone={engine === "ready" ? "ok" : "wait"} index={0} />
         <Readout
           label="detector"
           value={shown ? `${(shown.score * 100).toFixed(1)}%` : "—"}
           tone={shown ? "ok" : "idle"}
+          index={1}
         />
         <Readout
           label="descriptor"
           value={shown ? `${shown.embedding.length}-d` : "—"}
           tone={shown ? "ok" : "idle"}
+          index={2}
         />
         <Readout
           label="anti-spoof"
           value={shown?.real !== null && shown?.real !== undefined ? `${(shown.real * 100).toFixed(0)}% real` : "—"}
           tone={shown?.real != null ? (shown.real > 0.5 ? "ok" : "bad") : "idle"}
+          index={3}
         />
         <Readout
           label="liveness"
           value={shown?.live !== null && shown?.live !== undefined ? `${(shown.live * 100).toFixed(0)}% live` : "—"}
           tone={shown?.live != null ? (shown.live > 0.5 ? "ok" : "bad") : "idle"}
+          index={4}
         />
         <Readout
           label="source"
           value={probe ? probe.origin : cameraOn ? "camera, live" : "—"}
           tone={probe ? "ok" : "idle"}
+          index={5}
         />
 
         {note && (
@@ -328,22 +386,36 @@ function Readout({
   label,
   value,
   tone,
+  index,
 }: {
   label: string;
   value: string;
   tone: "ok" | "bad" | "wait" | "idle";
+  index: number;
 }) {
+  const reduced = useReducedMotion();
   const color = {
     ok: "var(--bone)",
     bad: "var(--reject)",
     wait: "var(--amber)",
     idle: "var(--faint)",
   }[tone];
+  const held = value !== "—";
   return (
     <div className="border-t border-rule pt-2">
       <dt className="eyebrow">{label}</dt>
       <dd className="mt-1 font-mono text-[13px]" style={{ color }}>
-        {value}
+        {/* keyed on idle↔held, not the text itself, so live score ticks
+            don't re-run the entrance every frame */}
+        <motion.span
+          key={held ? "held" : "idle"}
+          className="inline-block"
+          initial={held && !reduced ? { opacity: 0, y: 4 } : false}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, ease: EASE, delay: index * 0.05 }}
+        >
+          {value}
+        </motion.span>
       </dd>
     </div>
   );

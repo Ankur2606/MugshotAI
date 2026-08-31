@@ -1,6 +1,6 @@
 "use client";
 
-import { motion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 
 /**
  * The signature element: similarity shown on a lens focus scale rather than a
@@ -19,6 +19,7 @@ export function CalibrationScale({
   state: "accepted" | "rejected" | "pending" | "failed";
   pending?: boolean;
 }) {
+  const reduced = useReducedMotion();
   const pct = valueBp === null ? 0 : (valueBp / 10000) * 100;
   const needleColor =
     state === "accepted"
@@ -27,8 +28,26 @@ export function CalibrationScale({
         ? "var(--reject)"
         : "var(--dim)";
 
+  // The arrival carries the verdict: acceptance lands with a touch of spring
+  // overshoot, rejection lands heavy and overdamped — the needle itself
+  // sounds like the gavel.
+  const needleTransition = reduced
+    ? { duration: 0 }
+    : state === "accepted"
+      ? { type: "spring" as const, stiffness: 260, damping: 24 }
+      : state === "rejected"
+        ? { type: "spring" as const, stiffness: 150, damping: 38 }
+        : { duration: 0.9, ease: [0.16, 1, 0.3, 1] as const };
+
   return (
-    <div className="relative select-none" aria-hidden>
+    <motion.div
+      className="relative select-none"
+      aria-hidden
+      initial={false}
+      // a rejected reading dims the whole instrument: the case is closed
+      animate={{ opacity: state === "rejected" ? 0.7 : 1 }}
+      transition={{ duration: reduced ? 0 : 0.5, ease: "easeOut" }}
+    >
       {/* tick rule */}
       <div className="relative h-6 border-t border-rule">
         {Array.from({ length: 21 }, (_, i) => {
@@ -75,7 +94,19 @@ export function CalibrationScale({
             style={{ height: 18, background: needleColor }}
             initial={{ left: "0%", opacity: 0 }}
             animate={{ left: `${pct}%`, opacity: 1 }}
-            transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
+            transition={needleTransition}
+          />
+        )}
+
+        {/* acceptance flash: a verdict-colored tick at the landing point */}
+        {state === "accepted" && valueBp !== null && !reduced && (
+          <motion.span
+            key={valueBp}
+            className="absolute -top-1 w-px"
+            style={{ left: `${pct}%`, height: 18, background: "var(--verdict)" }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: [0, 1, 0] }}
+            transition={{ duration: 0.6, delay: 0.3, ease: "easeOut" }}
           />
         )}
 
@@ -89,6 +120,6 @@ export function CalibrationScale({
           />
         )}
       </div>
-    </div>
+    </motion.div>
   );
 }

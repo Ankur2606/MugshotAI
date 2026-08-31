@@ -78,7 +78,8 @@ export function GateIntro({ onDone }: { onDone?: () => void }) {
           aria-hidden={open}
           initial={false}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.01 }}
+          // a breath on the way out — the hard cut read as a glitch
+          transition={{ duration: 0.25 }}
         >
           {/* left leaf */}
           <motion.div
@@ -163,20 +164,44 @@ export function GateIntro({ onDone }: { onDone?: () => void }) {
             animate={{ opacity: open ? 0 : 1 }}
             transition={{ duration: 0.3 }}
           >
-            <div
-              className="flex flex-col items-center px-10 py-8 text-center sm:px-14"
-              style={{ background: "var(--ink)", border: "1px solid var(--rule)" }}
-            >
+            <div className="flex flex-col items-center">
+              {/* mobile stand-in for the film-edge ticks the seam loses below sm */}
+              <div className="mb-4 flex items-end gap-2 sm:hidden" aria-hidden>
+                {Array.from({ length: 5 }, (_, i) => (
+                  <span
+                    key={i}
+                    className="block w-px"
+                    style={{
+                      height: i === 2 ? 10 : 6,
+                      background: i === 2 ? "var(--rule-hi)" : "var(--rule)",
+                    }}
+                  />
+                ))}
+              </div>
+
+              <div
+                className="flex flex-col items-center px-6 py-6 text-center sm:px-14 sm:py-8"
+                style={{ background: "var(--ink)", border: "1px solid var(--rule)" }}
+              >
               <motion.span
                 className="eyebrow"
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6, delay: 0.15 }}
+                // tracking settles from wide to resting — the plate being set
+                initial={{
+                  opacity: 0,
+                  y: 8,
+                  letterSpacing: reduced ? "0.18em" : "0.3em",
+                }}
+                animate={{ opacity: 1, y: 0, letterSpacing: "0.18em" }}
+                transition={{
+                  duration: 0.6,
+                  delay: 0.15,
+                  letterSpacing: { duration: 0.8 },
+                }}
               >
                 evidence console
               </motion.span>
 
-              <span className="mt-4 flex overflow-hidden font-display text-[clamp(38px,6vw,64px)] leading-none tracking-[-0.02em] text-bone">
+              <span className="mt-4 flex overflow-hidden font-display text-[clamp(30px,9vw,48px)] leading-none tracking-[-0.02em] text-bone sm:text-[clamp(38px,6vw,64px)]">
                 {"Facechain".split("").map((ch, i) => (
                   <motion.span
                     key={i}
@@ -211,6 +236,7 @@ export function GateIntro({ onDone }: { onDone?: () => void }) {
                     {Math.round(progress * 100)}%
                   </span>
                 </div>
+              </div>
               </div>
             </div>
           </motion.div>

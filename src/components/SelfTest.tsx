@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { motion, useReducedMotion } from "motion/react";
 import { cosineSimilarityBp } from "@/lib/canonical";
 import { imageFromDataUrl, readFace } from "@/lib/human-client";
+import { ConsoleButton } from "./ConsoleButton";
 
 /**
  * Checks the face half of the pipeline without spending a search credit.
@@ -42,6 +44,7 @@ type Encoded = Subject & { embedding: number[]; sha256: string; thumb: string };
 type Pair = { a: string; b: string; same: boolean; bp: number };
 
 export function SelfTest() {
+  const reduced = useReducedMotion();
   const [log, setLog] = useState<string[]>([]);
   const [pairs, setPairs] = useState<Pair[]>([]);
   const [verdict, setVerdict] = useState<"pass" | "fail" | null>(null);
@@ -123,13 +126,19 @@ export function SelfTest() {
         different-person pair. No search key needed.
       </p>
 
-      <button
-        onClick={() => void run()}
-        disabled={running}
-        className="mt-8 border border-amber bg-amber px-4 py-2 font-mono text-[11px] uppercase tracking-widest text-ink transition-opacity hover:opacity-85 disabled:cursor-not-allowed disabled:border-rule disabled:bg-transparent disabled:text-faint"
+      {/* filled while running instead of disabled-grey, so the busy state
+          reads as work in progress; the click guard prevents double runs */}
+      <ConsoleButton
+        variant="primary"
+        filled={running}
+        onClick={() => {
+          if (!running) void run();
+        }}
+        aria-busy={running}
+        className="mt-8"
       >
         {running ? "Running…" : "Run self-test"}
-      </button>
+      </ConsoleButton>
 
       {verdict && (
         <p
@@ -141,7 +150,9 @@ export function SelfTest() {
       )}
 
       {pairs.length > 0 && (
-        <table className="mt-8 w-full border-collapse text-left">
+        // the table must scroll, not shear, on a 390px screen
+        <div className="mt-8 overflow-x-auto">
+          <table className="w-full min-w-[420px] border-collapse text-left">
           <thead>
             <tr>
               <th className="eyebrow border-b border-rule pb-2">pair</th>
@@ -150,8 +161,13 @@ export function SelfTest() {
             </tr>
           </thead>
           <tbody>
-            {pairs.map((p) => (
-              <tr key={`${p.a}-${p.b}`}>
+            {pairs.map((p, i) => (
+              <motion.tr
+                key={`${p.a}-${p.b}`}
+                initial={reduced ? false : { opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.35, delay: i * 0.04, ease: "easeOut" }}
+              >
                 <td className="border-b border-rule py-2 font-mono text-[12px] text-bone">
                   {p.a} ↔ {p.b}
                 </td>
@@ -164,10 +180,11 @@ export function SelfTest() {
                 >
                   {(p.bp / 100).toFixed(2)}
                 </td>
-              </tr>
+              </motion.tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </div>
       )}
 
       {log.length > 0 && (

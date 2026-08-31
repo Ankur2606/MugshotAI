@@ -6,6 +6,8 @@ import { Specimen, type Probe } from "./Specimen";
 import { GateIntro } from "./GateIntro";
 import { DepthField } from "./DepthField";
 import { ScatterText } from "./ScatterText";
+import { ConsoleButton } from "./ConsoleButton";
+import { ThresholdDial } from "./ThresholdDial";
 import { HashStrip } from "./HashStrip";
 import { CalibrationScale } from "./CalibrationScale";
 import { Station } from "./Station";
@@ -108,12 +110,20 @@ export function Docket() {
 
   const abortRef = useRef(false);
 
-  useEffect(() => {
+  const refreshStatus = useCallback(() => {
     fetch("/api/status")
       .then((r) => r.json())
       .then(setStatus)
       .catch(() => setStatus(null));
   }, []);
+
+  // The bench card should not lie: re-read it on an interval and after any
+  // write, so the block number moves when the chain does.
+  useEffect(() => {
+    refreshStatus();
+    const t = setInterval(refreshStatus, 15000);
+    return () => clearInterval(t);
+  }, [refreshStatus]);
 
   const scored = useMemo(
     () => candidates.filter((c) => c.similarityBp !== null),
@@ -293,12 +303,13 @@ export function Docket() {
         return;
       }
       setSeal(json);
+      refreshStatus();
     } catch (e) {
       setSealError(e instanceof Error ? e.message : "Anchoring failed.");
     } finally {
       setSealing(false);
     }
-  }, [bundle]);
+  }, [bundle, refreshStatus]);
 
   const runVerify = useCallback(async () => {
     if (!checkBundle) return;
@@ -358,42 +369,30 @@ export function Docket() {
         active={Boolean(probe)}
         done={scored.length > 0}
       >
-        <div className="flex flex-wrap items-end justify-between gap-6">
-          <div className="flex flex-wrap items-center gap-3">
-            <button
+        <div className="flex flex-wrap items-start justify-between gap-x-10 gap-y-6">
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <ConsoleButton
+              variant="primary"
+              filled={tracing}
               onClick={() => void runTrace()}
               disabled={!probe || tracing || !searchReady}
-              className="border border-amber bg-amber px-4 py-2 font-mono text-[11px] uppercase tracking-widest text-ink transition-opacity hover:opacity-85 disabled:cursor-not-allowed disabled:border-rule disabled:bg-transparent disabled:text-faint"
+              className="w-full sm:w-auto"
             >
               {tracing ? "Tracing…" : "Run trace"}
-            </button>
+            </ConsoleButton>
             {!searchReady && (
               <span className="datum text-reject">
                 No search backend configured — set SERPAPI_API_KEY in .env.local
               </span>
             )}
             {candidates.length > 0 && (
-              <span className="datum">
+              <span className="datum tabular-nums">
                 {progress}/{candidates.length} examined · {scored.length} carried a face
               </span>
             )}
           </div>
 
-          <label className="flex items-center gap-3">
-            <span className="eyebrow">accept at</span>
-            <input
-              type="range"
-              min={2000}
-              max={9000}
-              step={100}
-              value={thresholdBp}
-              onChange={(e) => setThresholdBp(Number(e.target.value))}
-              className="h-1 w-40 cursor-pointer appearance-none bg-rule accent-[var(--amber)]"
-            />
-            <span className="font-mono text-[13px] text-amber">
-              {(thresholdBp / 100).toFixed(0)}
-            </span>
-          </label>
+          <ThresholdDial valueBp={thresholdBp} onChange={setThresholdBp} />
         </div>
 
         {traceError && (
@@ -402,12 +401,13 @@ export function Docket() {
 
         {candidates.length > 0 && (
           <ul className="mt-7 grid gap-px border border-rule bg-rule sm:grid-cols-2">
-            {candidates.map((c) => (
+            {candidates.map((c, i) => (
               <CandidateRow
                 key={c.key}
                 c={c}
                 thresholdBp={thresholdBp}
                 isBest={best?.key === c.key}
+                index={i}
               />
             ))}
           </ul>
@@ -462,14 +462,11 @@ export function Docket() {
                 />
               </dl>
 
-              <details className="mt-7 border-t border-rule pt-4">
-                <summary className="eyebrow cursor-pointer hover:text-amber">
-                  canonical bundle — the exact bytes that get hashed
-                </summary>
-                <pre className="hash mt-3 max-h-56 overflow-auto whitespace-pre-wrap bg-bench p-4 text-dim">
+              <Disclosure label="canonical bundle — the exact bytes that get hashed">
+                <pre className="hash mt-3 max-h-56 overflow-auto whitespace-pre-wrap border border-rule bg-bench p-4 text-dim">
                   {canonicalJson(bundle)}
                 </pre>
-              </details>
+              </Disclosure>
             </div>
 
             <div className="self-start border border-rule bg-bench p-5">
@@ -496,13 +493,15 @@ export function Docket() {
         last
       >
         <div className="flex flex-wrap items-center gap-3">
-          <button
+          <ConsoleButton
+            variant="primary"
+            filled={sealing || Boolean(seal)}
             onClick={() => void runSeal()}
             disabled={!bundle || sealing || !chainReady || Boolean(seal)}
-            className="border border-amber bg-amber px-4 py-2 font-mono text-[11px] uppercase tracking-widest text-ink transition-opacity hover:opacity-85 disabled:cursor-not-allowed disabled:border-rule disabled:bg-transparent disabled:text-faint"
+            className="w-full sm:w-auto"
           >
             {sealing ? "Writing…" : seal ? "Sealed" : "Seal to chain"}
-          </button>
+          </ConsoleButton>
           {!chainReady && (
             <span className="datum text-reject">
               {status?.chain.registry
@@ -560,13 +559,14 @@ export function Docket() {
             </p>
 
             <div className="mt-5 flex flex-wrap items-center gap-4">
-              <button
+              <ConsoleButton
+                variant="quiet"
                 onClick={() => void runVerify()}
                 disabled={verifying}
-                className="border border-bone px-4 py-2 font-mono text-[11px] uppercase tracking-widest text-bone transition-colors hover:bg-bone hover:text-ink disabled:cursor-not-allowed disabled:border-rule disabled:text-faint"
+                className="w-full sm:w-auto"
               >
                 {verifying ? "Checking…" : "Re-verify against chain"}
-              </button>
+              </ConsoleButton>
 
               <label className="flex cursor-pointer items-center gap-2.5">
                 <input
@@ -634,8 +634,61 @@ export function Docket() {
           </div>
         )}
       </Station>
+
+        <footer className="mt-4 border-t border-rule pt-6">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-8 gap-y-2">
+            <span className="font-display text-[15px] tracking-[-0.01em] text-dim">
+              Facechain <span className="text-faint">— evidence console</span>
+            </span>
+            <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-faint">
+              faceres 1024-d · keccak-256 · {status?.chain.label ?? "no chain"} · hh goa 2026
+            </span>
+          </div>
+        </footer>
       </div>
     </>
+  );
+}
+
+/**
+ * A disclosure that folds like the evidence sleeve it is: the caret is a
+ * rotated corner bracket, the height animates, and the open state is real
+ * layout, not display toggling.
+ */
+function Disclosure({ label, children }: { label: string; children: React.ReactNode }) {
+  const [openState, setOpenState] = useState(false);
+  return (
+    <div className="mt-7 border-t border-rule pt-4">
+      <button
+        onClick={() => setOpenState((v) => !v)}
+        aria-expanded={openState}
+        className="eyebrow flex w-full items-center gap-2.5 text-left transition-colors hover:text-amber focus-visible:text-amber"
+      >
+        <motion.span
+          aria-hidden
+          className="inline-block font-mono text-[10px]"
+          initial={false}
+          animate={{ rotate: openState ? 90 : 0 }}
+          transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+        >
+          ▸
+        </motion.span>
+        {label}
+      </button>
+      <AnimatePresence initial={false}>
+        {openState && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden"
+          >
+            {children}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
@@ -643,10 +696,12 @@ function CandidateRow({
   c,
   thresholdBp,
   isBest,
+  index,
 }: {
   c: Scored;
   thresholdBp: number;
   isBest: boolean;
+  index: number;
 }) {
   const state: "accepted" | "rejected" | "pending" | "failed" =
     c.phase === "skipped"
@@ -658,11 +713,26 @@ function CandidateRow({
           : "rejected";
 
   return (
-    <li
-      className="relative bg-ink p-4 transition-colors"
+    <motion.li
+      className="group relative bg-ink p-4"
       style={{ background: isBest ? "var(--bench-hi)" : undefined }}
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, delay: Math.min(index * 0.05, 0.6), ease: [0.22, 1, 0.36, 1] }}
+      whileHover={{ backgroundColor: isBest ? undefined : "rgba(26,31,38,0.85)" }}
     >
       {isBest && <span className="absolute inset-y-0 left-0 w-[2px] bg-verdict" />}
+      {/* voided evidence: skipped candidates get the archivist's hatching */}
+      {c.phase === "skipped" && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-0"
+          style={{
+            backgroundImage:
+              "repeating-linear-gradient(-45deg, transparent 0 7px, rgba(76,85,94,0.14) 7px 8px)",
+          }}
+        />
+      )}
       <div className="flex gap-4">
         <div className="h-14 w-14 shrink-0 overflow-hidden border border-rule bg-bench">
           {c.thumb ? (
@@ -718,7 +788,7 @@ function CandidateRow({
           </p>
         </div>
       </div>
-    </li>
+    </motion.li>
   );
 }
 
@@ -752,11 +822,15 @@ function Masthead({ status }: { status: Status | null }) {
   const search = status?.search.active;
   const chain = status?.chain;
   return (
-    <header className="border-b border-rule py-16">
-      <div className="flex flex-wrap items-start justify-between gap-8">
-        <div>
-          <span className="eyebrow">face → post → chain</span>
-          <h1 className="mt-4 font-display text-[clamp(44px,7vw,86px)] font-normal leading-[0.92] tracking-[-0.02em]">
+    <header className="border-b border-rule py-12 sm:py-16">
+      <div className="grid items-start gap-10 lg:grid-cols-[1fr_300px] lg:gap-16">
+        <div className="min-w-0">
+          <span className="flex items-center gap-4">
+            <span className="h-px w-8 shrink-0 bg-rule-hi" aria-hidden />
+            <span className="eyebrow whitespace-nowrap">face → post → chain</span>
+            <span className="h-px flex-1 bg-rule" aria-hidden />
+          </span>
+          <h1 className="mt-5 font-display text-[clamp(44px,9vw,86px)] font-normal leading-[0.92] tracking-[-0.02em]">
             <ScatterText text="Facechain" />
           </h1>
           <p className="mt-5 max-w-lg text-[15px] leading-relaxed text-dim">
@@ -764,39 +838,102 @@ function Masthead({ status }: { status: Status | null }) {
             sealed to a blockchain. Every candidate is re-encoded and scored here before anything
             is called a match.
           </p>
+
+          {/* the dossier line: what instrument, what digest, whose custody */}
+          <dl className="mt-7 flex flex-wrap gap-x-8 gap-y-2 font-mono text-[10px] uppercase tracking-[0.14em] text-faint">
+            <div className="flex gap-2">
+              <dt>encoder</dt>
+              <dd className="text-dim">faceres · 1024-d</dd>
+            </div>
+            <div className="flex gap-2">
+              <dt>digest</dt>
+              <dd className="text-dim">keccak-256</dd>
+            </div>
+            <div className="flex gap-2">
+              <dt>probe</dt>
+              <dd className="text-dim">never leaves this browser unhashed</dd>
+            </div>
+          </dl>
         </div>
 
-        <dl className="grid min-w-[240px] gap-3">
-          <StatusLine
-            label="search"
-            value={search ? search.label : "not configured"}
-            ok={Boolean(search?.configured)}
-          />
-          <StatusLine
-            label="chain"
-            value={chain ? `${chain.label} · block ${chain.blockNumber ?? "—"}` : "checking"}
-            ok={Boolean(chain?.reachable)}
-          />
-          <StatusLine
-            label="registry"
-            value={chain?.registry ? `${chain.registry.slice(0, 10)}…${chain.registry.slice(-6)}` : "not deployed"}
-            ok={Boolean(chain?.registry)}
-          />
-        </dl>
+        <BenchCard search={search} chain={chain} />
       </div>
     </header>
   );
 }
 
-function StatusLine({ label, value, ok }: { label: string; value: string; ok: boolean }) {
+/**
+ * The instrument panel: is each half of the pipeline actually live right now.
+ * It re-reads itself every fifteen seconds, so the block number is a fact,
+ * not a decoration.
+ */
+function BenchCard({
+  search,
+  chain,
+}: {
+  search: Status["search"]["active"] | undefined;
+  chain: Status["chain"] | undefined;
+}) {
+  const allOk = Boolean(search?.configured && chain?.reachable && chain?.registry);
   return (
-    <div className="flex items-center gap-3 border-t border-rule pt-2">
+    <motion.aside
+      className="border border-rule bg-bench"
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5, delay: 0.15, ease: [0.22, 1, 0.36, 1] }}
+    >
+      <div className="flex items-center justify-between border-b border-rule px-4 py-2.5">
+        <span className="eyebrow">bench status</span>
+        <motion.span
+          aria-hidden
+          className="h-1.5 w-1.5 rounded-full"
+          style={{ background: allOk ? "var(--verdict)" : "var(--amber)" }}
+          animate={{ opacity: [1, 0.35, 1] }}
+          transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+        />
+      </div>
+      <dl>
+        <BenchRow
+          label="search"
+          value={search ? search.label : "not configured"}
+          ok={Boolean(search?.configured)}
+        />
+        <BenchRow
+          label="chain"
+          value={chain ? chain.label : "checking"}
+          ok={Boolean(chain?.reachable)}
+        />
+        <BenchRow
+          label="registry"
+          value={
+            chain?.registry
+              ? `${chain.registry.slice(0, 8)}…${chain.registry.slice(-4)}`
+              : "not deployed"
+          }
+          ok={Boolean(chain?.registry)}
+        />
+      </dl>
+      <div className="flex items-baseline justify-between border-t border-rule px-4 py-2.5">
+        <span className="eyebrow">block</span>
+        <span className="font-mono text-[12px] tabular-nums text-dim">
+          {chain?.blockNumber ?? "—"}
+        </span>
+      </div>
+    </motion.aside>
+  );
+}
+
+function BenchRow({ label, value, ok }: { label: string; value: string; ok: boolean }) {
+  return (
+    <div className="flex items-center gap-3 border-b border-rule px-4 py-2.5 last:border-b-0">
       <span
         className="h-1.5 w-1.5 shrink-0 rounded-full"
         style={{ background: ok ? "var(--verdict)" : "var(--reject)" }}
       />
-      <span className="eyebrow w-16">{label}</span>
-      <span className="font-mono text-[11px] text-dim">{value}</span>
+      <dt className="eyebrow w-14 shrink-0">{label}</dt>
+      <dd className="min-w-0 truncate text-right font-mono text-[11px] text-dim" style={{ marginLeft: "auto" }}>
+        {value}
+      </dd>
     </div>
   );
 }

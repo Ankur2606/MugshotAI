@@ -62,10 +62,10 @@ export function Station({
 
       {/* body */}
       <motion.div
-        className="border-b border-rule py-9 last:border-b-0"
+        className="border-b border-rule py-8 last:border-b-0 sm:py-10"
         initial={false}
-        animate={{ opacity: active ? 1 : 0.42 }}
-        transition={{ duration: 0.45 }}
+        animate={{ opacity: active ? 1 : 0.42, y: active ? 0 : 4 }}
+        transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
       >
         <div className="flex items-baseline gap-4">
           <span className="font-mono text-[11px] tracking-[0.2em] text-faint">{index}</span>
