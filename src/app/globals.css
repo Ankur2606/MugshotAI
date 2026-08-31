@@ -1,26 +1,126 @@
 @import "tailwindcss";
 
+/*
+  Palette reads as a darkroom: a cold graphite bench lit by a warm safelight.
+  The warm/cool tension between bone text and graphite ground is the point —
+  it keeps the console from reading as a generic dark dashboard.
+*/
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --ink: #0b0d10; /* ground */
+  --bench: #14181d; /* panel */
+  --bench-hi: #1a1f26; /* raised panel */
+  --rule: #232a32; /* hairline */
+  --rule-hi: #333c47; /* hairline, emphasis */
+  --bone: #e8e4db; /* primary text, warm */
+  --dim: #7c8791; /* secondary text, cool */
+  --faint: #4c555e; /* tertiary text */
+  --amber: #e8a33d; /* safelight: the single accent */
+  --amber-deep: #8a5f1f;
+  --verdict: #6fd3b4; /* accepted */
+  --reject: #c4574b; /* rejected */
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-ink: var(--ink);
+  --color-bench: var(--bench);
+  --color-bench-hi: var(--bench-hi);
+  --color-rule: var(--rule);
+  --color-rule-hi: var(--rule-hi);
+  --color-bone: var(--bone);
+  --color-dim: var(--dim);
+  --color-faint: var(--faint);
+  --color-amber: var(--amber);
+  --color-amber-deep: var(--amber-deep);
+  --color-verdict: var(--verdict);
+  --color-reject: var(--reject);
+
+  --font-display: var(--font-bodoni), Georgia, serif;
+  --font-sans: var(--font-inter-tight), system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  border-color: var(--rule);
+}
+
+html {
+  background: var(--ink);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--ink);
+  color: var(--bone);
+  font-family: var(--font-sans);
+  font-feature-settings: "cv05" 1, "ss03" 1;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Grain: a faint film-emulsion tooth over the whole ground. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 100;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Utility classes for the recurring label vernacular. */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.datum {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--dim);
+}
+
+.hash {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.01em;
+  word-break: break-all;
+}
+
+:focus-visible {
+  outline: 1px solid var(--amber);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--amber);
+  color: var(--ink);
+}
+
+/* Scrollbars, kept in the same register as the hairlines. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--ink);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--rule);
+  border: 2px solid var(--ink);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--rule-hi);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
