@@ -16,3 +16,7 @@ chain/cache
 chain/artifacts
 chain/node_modules
 
+
+# next.js auto-generated agent rule files
+AGENTS.md
+CLAUDE.md

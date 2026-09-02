@@ -7,6 +7,7 @@ import {
   frameToJpeg,
   loadEngine,
   readFace,
+  readFaceStable,
   type FaceReading,
 } from "@/lib/human-client";
 
@@ -137,7 +138,9 @@ export function Specimen({
     const video = videoRef.current;
     if (!video) return;
     setNote(null);
-    const reading = await readFace(video);
+    // the committed probe is worth the second inference pass; the live
+    // preview above stays single-pass so the loop stays smooth
+    const reading = await readFaceStable(video);
     if (!reading) {
       setNote("No face in that frame. Move into the light and try again.");
       return;
@@ -165,7 +168,7 @@ export function Specimen({
       await img.decode().catch(() => {
         setNote("That file could not be read as an image.");
       });
-      const reading = await readFace(img);
+      const reading = await readFaceStable(img);
       if (!reading) {
         setNote("No face found in that image. Try a clearer, front-facing photo.");
         return;

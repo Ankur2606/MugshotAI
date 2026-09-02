@@ -14,6 +14,7 @@ import { Station } from "./Station";
 import {
   ENCODER_ID,
   imageFromDataUrl,
+  passesQualityGate,
   readFace,
 } from "@/lib/human-client";
 import {
@@ -211,6 +212,14 @@ export function Docket() {
         const reading = await readFace(img);
         if (!reading) {
           patch({ phase: "skipped", note: "no face detected on this page image" });
+          return;
+        }
+        // refuse to score a face too small or too uncertain to compare
+        // fairly; a low-res crop drifts toward the mean face and would
+        // otherwise post a misleadingly high similarity
+        const gate = passesQualityGate(reading);
+        if (!gate.ok) {
+          patch({ phase: "skipped", note: gate.reason });
           return;
         }
         patch({

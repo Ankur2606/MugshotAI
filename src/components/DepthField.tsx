@@ -1,27 +1,57 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { motion, useMotionValue, useReducedMotion, useSpring } from "motion/react";
 
 /**
- * The bench in depth: a calibration grid laid flat and receding under the
- * console, with the whole scene leaning a degree or two toward the pointer,
- * and a faint safelight glow trailing the cursor. Three layers, transforms
- * only, no canvas and no WebGL — it has to stay invisible to the frame budget
- * while the face models are doing real work on the GPU.
+ * The bench in depth, drawn honestly: perspective is computed into the SVG
+ * geometry instead of asked of the compositor. The previous version used a
+ * real 3D-transformed plane (rotateX on a 240vw layer), and on some GPUs
+ * Chrome's tiler gave up on the projected bounds — everything below the first
+ * viewport rendered black until a resize forced a repaint. Flat SVG lines
+ * cannot fail that way.
+ *
+ * Three quiet layers: a far wall of hairlines above the horizon, a projected
+ * bench grid below it with a slow amber scan travelling down it, and a
+ * safelight pool trailing the cursor. Pointer parallax is a few 2D pixels on
+ * springs — no perspective, no preserve-3d, nothing for a tiler to misjudge.
  */
 
-const TILT = 1.6; // max scene lean, degrees
+const W = 1440;
+const H = 900;
+const VPX = W / 2; // vanishing point
+const HORIZON = 380;
+
+const PARALLAX = 9; // px of scene drift toward the pointer
 const LEAN = { stiffness: 55, damping: 18, mass: 1.1 };
 const GLOW = { stiffness: 45, damping: 16, mass: 1.2 };
 
+function benchGeometry() {
+  // ground rows: linear in world space, quadratic in screen space
+  const rows: number[] = [];
+  for (let i = 1; i <= 12; i++) {
+    const t = i / 12;
+    rows.push(HORIZON + (H - HORIZON) * Math.pow(t, 2.2));
+  }
+  // verticals: fan out from near the vanishing point to the bottom edge
+  const cols: Array<{ x1: number; x2: number }> = [];
+  for (let xb = -1200; xb <= W + 1200; xb += 180) {
+    cols.push({ x1: VPX + (xb - VPX) * 0.06, x2: xb });
+  }
+  // far wall hairlines above the horizon
+  const wall: number[] = [];
+  for (let x = 40; x <= W - 40; x += 160) wall.push(x);
+  return { rows, cols, wall };
+}
+
 export function DepthField() {
   const reduced = useReducedMotion();
+  const { rows, cols, wall } = useMemo(benchGeometry, []);
 
-  const rx = useSpring(useMotionValue(0), LEAN);
-  const ry = useSpring(useMotionValue(0), LEAN);
-  const gx = useSpring(useMotionValue(-400), GLOW);
-  const gy = useSpring(useMotionValue(-400), GLOW);
+  const sx = useSpring(useMotionValue(0), LEAN);
+  const sy = useSpring(useMotionValue(0), LEAN);
+  const gx = useSpring(useMotionValue(-600), GLOW);
+  const gy = useSpring(useMotionValue(-600), GLOW);
 
   useEffect(() => {
     if (reduced) return;
@@ -29,16 +59,16 @@ export function DepthField() {
     if (window.matchMedia("(pointer: coarse)").matches) return;
 
     const onMove = (e: PointerEvent) => {
-      const nx = e.clientX / window.innerWidth - 0.5; // -0.5 .. 0.5
+      const nx = e.clientX / window.innerWidth - 0.5;
       const ny = e.clientY / window.innerHeight - 0.5;
-      ry.set(nx * TILT * 2);
-      rx.set(-ny * TILT * 2);
+      sx.set(-nx * PARALLAX * 2);
+      sy.set(-ny * PARALLAX);
       gx.set(e.clientX);
       gy.set(e.clientY);
     };
     const onLeave = () => {
-      rx.set(0);
-      ry.set(0);
+      sx.set(0);
+      sy.set(0);
     };
 
     document.addEventListener("pointermove", onMove, { passive: true });
@@ -47,67 +77,83 @@ export function DepthField() {
       document.removeEventListener("pointermove", onMove);
       document.removeEventListener("pointerleave", onLeave);
     };
-  }, [reduced, rx, ry, gx, gy]);
+  }, [reduced, sx, sy, gx, gy]);
 
   return (
-    <div
-      aria-hidden
-      className="pointer-events-none fixed inset-0 z-0 overflow-hidden"
-      style={{ perspective: 1100 }}
-    >
-      <motion.div
-        className="absolute inset-0"
-        style={{
-          rotateX: rx,
-          rotateY: ry,
-          transformStyle: "preserve-3d",
-          willChange: "transform",
-        }}
+    <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
+      <motion.svg
+        className="absolute inset-[-16px] h-[calc(100%+32px)] w-[calc(100%+32px)]"
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="xMidYMid slice"
+        style={{ x: sx, y: sy, willChange: "transform" }}
       >
-        {/* far wall: sparse vertical hairlines */}
-        <div
-          className="absolute inset-0"
-          style={{
-            transform: "translateZ(-360px) scale(1.5)",
-            backgroundImage:
-              "repeating-linear-gradient(90deg, var(--rule) 0 1px, transparent 1px 160px)",
-            opacity: 0.28,
-            maskImage:
-              "linear-gradient(to bottom, transparent 0%, black 30%, black 65%, transparent 100%)",
-          }}
-        />
+        <defs>
+          {/* the wall dissolves before it reaches the type */}
+          <linearGradient id="df-wall" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="var(--rule)" stopOpacity="0" />
+            <stop offset="0.45" stopColor="var(--rule)" stopOpacity="0.5" />
+            <stop offset="1" stopColor="var(--rule)" stopOpacity="0" />
+          </linearGradient>
+          {/* the bench fades at its far edge and at the sides */}
+          <radialGradient id="df-bench" cx="0.5" cy="0" r="1">
+            <stop offset="0" stopColor="white" stopOpacity="0.55" />
+            <stop offset="0.55" stopColor="white" stopOpacity="0.28" />
+            <stop offset="1" stopColor="white" stopOpacity="0" />
+          </radialGradient>
+          <mask id="df-bench-mask">
+            <rect x="0" y={HORIZON} width={W} height={H - HORIZON} fill="url(#df-bench)" />
+          </mask>
+        </defs>
 
-        {/* bench: the grid laid flat, receding under the console */}
-        <div
-          className="absolute left-1/2 top-[58%] h-[130vh] w-[240vw] -translate-x-1/2"
-          style={{
-            transform: "translateX(-50%) rotateX(74deg)",
-            transformOrigin: "50% 0%",
-            backgroundImage:
-              "repeating-linear-gradient(0deg, var(--rule) 0 1px, transparent 1px 90px)," +
-              "repeating-linear-gradient(90deg, var(--rule) 0 1px, transparent 1px 90px)",
-            opacity: 0.5,
-            maskImage:
-              "radial-gradient(ellipse 55% 62% at 50% 0%, black 0%, transparent 78%)",
-          }}
-        >
-          {/* slow conveyor drift down the bench; one extra tile of grid so the
-              loop point is invisible. Skipped under reduced motion. */}
+        {/* far wall */}
+        <g>
+          {wall.map((x) => (
+            <line key={x} x1={x} y1={60} x2={x} y2={HORIZON} stroke="url(#df-wall)" strokeWidth="1" />
+          ))}
+        </g>
+
+        {/* bench grid, pre-projected */}
+        <g mask="url(#df-bench-mask)">
+          {rows.map((y) => (
+            <line key={y} x1={0} y1={y} x2={W} y2={y} stroke="var(--rule)" strokeWidth="1" />
+          ))}
+          {cols.map(({ x1, x2 }) => (
+            <line key={x2} x1={x1} y1={HORIZON} x2={x2} y2={H} stroke="var(--rule)" strokeWidth="1" />
+          ))}
+
+          {/* the scan: one amber row travelling down the bench, then resting.
+              SVG is XML — this is the same SMIL vocabulary as the workflow
+              diagrams in docs/, so the page and its documentation animate in
+              one language. */}
           {!reduced && (
-            <motion.div
-              className="absolute inset-x-0 -top-[90px] bottom-0"
-              style={{
-                backgroundImage:
-                  "repeating-linear-gradient(0deg, var(--amber) 0 1px, transparent 1px 450px)",
-                opacity: 0.14,
-                willChange: "transform",
-              }}
-              animate={{ y: [0, 450] }}
-              transition={{ duration: 26, repeat: Infinity, ease: "linear" }}
-            />
+            <line x1={0} y1={0} x2={W} y2={0} stroke="var(--amber)" strokeWidth="1" opacity="0">
+              <animate
+                attributeName="y1"
+                values={`${HORIZON};${H}`}
+                dur="7s"
+                repeatCount="indefinite"
+                calcMode="spline"
+                keySplines="0.4 0 0.6 1"
+              />
+              <animate
+                attributeName="y2"
+                values={`${HORIZON};${H}`}
+                dur="7s"
+                repeatCount="indefinite"
+                calcMode="spline"
+                keySplines="0.4 0 0.6 1"
+              />
+              <animate
+                attributeName="opacity"
+                values="0;0.35;0.12;0"
+                keyTimes="0;0.15;0.7;1"
+                dur="7s"
+                repeatCount="indefinite"
+              />
+            </line>
           )}
-        </div>
-      </motion.div>
+        </g>
+      </motion.svg>
 
       {/* safelight: a dim warm pool that trails the cursor */}
       {!reduced && (
@@ -125,7 +171,7 @@ export function DepthField() {
         />
       )}
 
-      {/* settles the scene back into the page's ground color at the edges */}
+      {/* settle the scene back into the page ground at the edges */}
       <div
         className="absolute inset-0"
         style={{

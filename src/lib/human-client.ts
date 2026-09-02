@@ -116,6 +116,72 @@ export async function readFace(
   return toReading(best);
 }
 
+/**
+ * Quality gates for candidate scoring. Cosine similarity on face embeddings
+ * degrades sharply below ~50px of face — low-resolution crops drift toward
+ * the mean face and inflate false matches — so a candidate face smaller than
+ * this, or one the detector itself is unsure about, is refused a score
+ * rather than given a misleading one.
+ */
+export const MIN_FACE_PX = 48;
+export const MIN_FACE_SCORE = 0.45;
+
+export function passesQualityGate(r: FaceReading): { ok: boolean; reason?: string } {
+  const side = Math.min(r.box[2], r.box[3]);
+  if (side < MIN_FACE_PX) {
+    return { ok: false, reason: `face is ${Math.round(side)}px — too small to score fairly` };
+  }
+  if (r.score < MIN_FACE_SCORE) {
+    return { ok: false, reason: "detector was not confident enough in this face" };
+  }
+  return { ok: true };
+}
+
+/**
+ * Flip test-time augmentation for the probe: encode the face in the frame and
+ * in its mirror, then average the two descriptors. Standard practice from the
+ * face-recognition literature (ArcFace and friends evaluate with flip
+ * averaging) — it cancels pose asymmetry and makes the probe descriptor
+ * noticeably more stable between captures. Used only for the one probe, not
+ * for the two dozen candidates, where the doubled inference cost buys less.
+ */
+export async function readFaceStable(
+  input: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement,
+): Promise<FaceReading | null> {
+  const base = await readFace(input);
+  if (!base) return null;
+
+  try {
+    const w =
+      input instanceof HTMLVideoElement
+        ? input.videoWidth
+        : (input as HTMLImageElement).naturalWidth || input.width;
+    const h =
+      input instanceof HTMLVideoElement
+        ? input.videoHeight
+        : (input as HTMLImageElement).naturalHeight || input.height;
+    if (!w || !h) return base;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return base;
+    ctx.translate(w, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(input, 0, 0, w, h);
+
+    const mirrored = await readFace(canvas);
+    if (!mirrored || mirrored.embedding.length !== base.embedding.length) return base;
+
+    const averaged = base.embedding.map((v, i) => (v + mirrored.embedding[i]) / 2);
+    return { ...base, embedding: averaged };
+  } catch {
+    // TTA is an improvement, never a requirement — fall back to the single pass
+    return base;
+  }
+}
+
 /** Decode a data URL into an image element the encoder can consume. */
 export function imageFromDataUrl(dataUrl: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {

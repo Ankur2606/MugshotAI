@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" role="img" aria-label="Facechain component view: browser console, Next.js API routes, external search services, and the EvidenceRegistry contract">
+  <rect x="0" y="0" width="1200" height="640" fill="#0b0d10"/>
+
+  <text x="40" y="44" font-family="Georgia, serif" font-size="15" letter-spacing="3" fill="#e8e4db">FACECHAIN</text>
+  <text x="158" y="44" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#7c8791">component view &#183; what runs where, and what crosses each boundary</text>
+
+  <!-- ============ trust boundaries ============ -->
+  <rect x="30" y="70" width="330" height="530" rx="4" fill="none" stroke="#333c47" stroke-dasharray="4 4"/>
+  <text x="42" y="88" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#4c555e">browser &#183; face data lives here only</text>
+
+  <rect x="420" y="70" width="330" height="530" rx="4" fill="none" stroke="#333c47" stroke-dasharray="4 4"/>
+  <text x="432" y="88" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#4c555e">next.js server &#183; api routes</text>
+
+  <rect x="810" y="70" width="360" height="250" rx="4" fill="none" stroke="#333c47" stroke-dasharray="4 4"/>
+  <text x="822" y="88" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#4c555e">external services</text>
+
+  <rect x="810" y="350" width="360" height="250" rx="4" fill="none" stroke="#333c47" stroke-dasharray="4 4"/>
+  <text x="822" y="368" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#4c555e">chain &#183; digests only, never content</text>
+
+  <!-- ============ browser column ============ -->
+  <rect x="48" y="104" width="294" height="150" rx="3" fill="#14181d" stroke="#232a32"/>
+  <text x="195" y="130" text-anchor="middle" font-family="Georgia, serif" font-size="13" letter-spacing="2" fill="#e8e4db">HUMAN ENGINE</text>
+  <text x="64" y="158" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#7c8791">blazeface &#183; facemesh &#183; iris</text>
+  <text x="64" y="176" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#7c8791">faceres 1024-d &#183; antispoof &#183; liveness</text>
+  <text x="64" y="194" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#7c8791">flip-TTA probe &#183; quality gate &#8805;48px</text>
+  <text x="64" y="212" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#7c8791">cosine similarity, basis points</text>
+  <text x="64" y="236" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#4c555e">weights from /models &#183; 13 MB &#183; no CDN</text>
+
+  <rect x="48" y="286" width="294" height="130" rx="3" fill="#14181d" stroke="#232a32"/>
+  <text x="195" y="312" text-anchor="middle" font-family="Georgia, serif" font-size="13" letter-spacing="2" fill="#e8e4db">CONSOLE</text>
+  <text x="64" y="340" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#7c8791">I specimen &#183; II trace</text>
+  <text x="64" y="358" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#7c8791">III adjudication &#183; IV seal</text>
+  <text x="64" y="382" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#4c555e">search proposes &#183; encoder decides</text>
+
+  <rect x="48" y="448" width="294" height="120" rx="3" fill="#14181d" stroke="#232a32"/>
+  <text x="195" y="474" text-anchor="middle" font-family="Georgia, serif" font-size="13" letter-spacing="2" fill="#e8e4db">EVIDENCE BUNDLE</text>
+  <text x="64" y="502" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#7c8791">canonical JSON &#183; keys sorted</text>
+  <text x="64" y="520" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#7c8791">integers only &#183; no floats</text>
+  <text x="64" y="544" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#4c555e">digest = keccak-256(canonical bytes)</text>
+
+  <!-- ============ server column ============ -->
+  <rect x="438" y="104" width="294" height="88" rx="3" fill="#14181d" stroke="#232a32"/>
+  <text x="585" y="130" text-anchor="middle" font-family="ui-monospace, Consolas, monospace" font-size="12" fill="#e8e4db">/api/search</text>
+  <text x="454" y="156" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#7c8791">provider adapters &#183; serpapi | facecheck</text>
+  <text x="454" y="174" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#4c555e">503, not invented results, when unkeyed</text>
+
+  <rect x="438" y="212" width="294" height="88" rx="3" fill="#14181d" stroke="#232a32"/>
+  <text x="585" y="238" text-anchor="middle" font-family="ui-monospace, Consolas, monospace" font-size="12" fill="#e8e4db">/api/proxy</text>
+  <text x="454" y="264" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#7c8791">fetch candidate image &#183; sha-256 bytes</text>
+  <text x="454" y="282" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#4c555e">data URL back, canvas stays untainted</text>
+
+  <rect x="438" y="320" width="294" height="88" rx="3" fill="#14181d" stroke="#232a32"/>
+  <text x="585" y="346" text-anchor="middle" font-family="ui-monospace, Consolas, monospace" font-size="12" fill="#e8e4db">/api/anchor &#183; /api/verify</text>
+  <text x="454" y="372" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#7c8791">recompute digest &#183; write / read chain</text>
+  <text x="454" y="390" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#4c555e">409 on replay of an anchored digest</text>
+
+  <rect x="438" y="428" width="294" height="70" rx="3" fill="#14181d" stroke="#232a32"/>
+  <text x="585" y="454" text-anchor="middle" font-family="ui-monospace, Consolas, monospace" font-size="12" fill="#e8e4db">/api/status</text>
+  <text x="454" y="480" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#7c8791">is each half of the pipeline live</text>
+
+  <!-- ============ external services ============ -->
+  <rect x="828" y="104" width="324" height="88" rx="3" fill="#14181d" stroke="#232a32"/>
+  <text x="990" y="130" text-anchor="middle" font-family="ui-monospace, Consolas, monospace" font-size="12" fill="#e8e4db">SerpApi &#183; Google Lens</text>
+  <text x="844" y="156" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#7c8791">POST /image &#8594; image_id</text>
+  <text x="844" y="174" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#7c8791">engine=google_lens &#8594; visual_matches</text>
+
+  <rect x="828" y="212" width="324" height="74" rx="3" fill="#14181d" stroke="#232a32"/>
+  <text x="990" y="238" text-anchor="middle" font-family="ui-monospace, Consolas, monospace" font-size="12" fill="#e8e4db">FaceCheck.ID</text>
+  <text x="844" y="264" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#4c555e">true face search &#183; optional, paid</text>
+
+  <!-- ============ chain ============ -->
+  <rect x="828" y="384" width="324" height="188" rx="3" fill="#14181d" stroke="#e8a33d" stroke-opacity="0.85">
+    <animate attributeName="stroke-opacity" values="0.85;0.3;0.85" dur="7s" repeatCount="indefinite"/>
+  </rect>
+  <text x="990" y="412" text-anchor="middle" font-family="Georgia, serif" font-size="13" letter-spacing="2" fill="#e8e4db">EVIDENCEREGISTRY</text>
+  <text x="844" y="440" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#7c8791">anchor(bytes32, uint32 simBp, url)</text>
+  <text x="844" y="458" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#7c8791">verify(bytes32) &#8594; exists &#183; time &#183; who</text>
+  <text x="844" y="476" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#7c8791">event Anchored &#183; reverts on replay</text>
+  <text x="844" y="504" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#4c555e">hardhat 31337 &#183; polygon amoy 80002</text>
+  <text x="844" y="528" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#4c555e">stored: digest &#183; similarityBp &#183; matchUrl</text>
+  <text x="844" y="546" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#4c555e">never: the image &#183; never: the descriptor</text>
+
+  <!-- ============ edges ============ -->
+  <!-- console -> /api/search -->
+  <path id="e1" d="M342,330 L400,330 L400,148 L438,148" stroke="#333c47" fill="none"/>
+  <path d="M434,144 L442,148 L434,152 Z" fill="#4c555e"/>
+  <text x="352" y="322" font-family="ui-monospace, Consolas, monospace" font-size="9" fill="#4c555e">probe JPEG</text>
+
+  <!-- /api/search -> serpapi -->
+  <path id="e2" d="M732,148 L828,148" stroke="#333c47" fill="none"/>
+  <path d="M824,144 L832,148 L824,152 Z" fill="#4c555e"/>
+
+  <!-- serpapi -> console (candidates), drawn back under -->
+  <path d="M828,178 L780,178 L780,196 L732,196" stroke="#232a32" fill="none"/>
+  <text x="744" y="190" font-family="ui-monospace, Consolas, monospace" font-size="9" fill="#4c555e">candidates json</text>
+
+  <!-- console -> /api/proxy -->
+  <path d="M342,352 L410,352 L410,256 L438,256" stroke="#333c47" fill="none"/>
+  <path d="M434,252 L442,256 L434,260 Z" fill="#4c555e"/>
+  <text x="352" y="368" font-family="ui-monospace, Consolas, monospace" font-size="9" fill="#4c555e">image bytes + sha-256</text>
+
+  <!-- bundle -> /api/anchor -->
+  <path id="e3" d="M342,508 L400,508 L400,364 L438,364" stroke="#333c47" fill="none"/>
+  <path d="M434,360 L442,364 L434,368 Z" fill="#4c555e"/>
+  <text x="352" y="500" font-family="ui-monospace, Consolas, monospace" font-size="9" fill="#4c555e">bundle digest</text>
+
+  <!-- /api/anchor -> registry -->
+  <path id="e4" d="M732,364 L780,364 L780,470 L828,470" stroke="#333c47" fill="none"/>
+  <path d="M824,466 L832,470 L824,474 Z" fill="#4c555e"/>
+  <text x="744" y="456" font-family="ui-monospace, Consolas, monospace" font-size="9" fill="#4c555e">tx &#183; receipt back</text>
+
+  <!-- engine <-> console, vertical -->
+  <path d="M195,254 L195,286" stroke="#333c47" fill="none"/>
+  <path d="M191,282 L195,290 L199,282 Z" fill="#4c555e"/>
+  <path d="M195,416 L195,448" stroke="#333c47" fill="none"/>
+  <path d="M191,444 L195,452 L199,444 Z" fill="#4c555e"/>
+
+  <!-- ============ the travelling pulse: console -> anchor -> registry ============ -->
+  <circle r="3" fill="#e8a33d">
+    <animateMotion dur="8s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="linear" path="M342,508 L400,508 L400,364 L438,364 L732,364 L780,364 L780,470 L828,470"/>
+    <animate attributeName="opacity" values="0;1;1;0.9;0" keyTimes="0;0.08;0.6;0.9;1" dur="8s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- footer -->
+  <text x="600" y="622" text-anchor="middle" font-family="ui-monospace, Consolas, monospace" font-size="10" fill="#4c555e">the browser owns the face &#183; the server owns the fetches &#183; the chain owns nothing but the digest</text>
+</svg>

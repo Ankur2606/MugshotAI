@@ -7,7 +7,15 @@ blockchain as a tamper-evident record.
 face scan  ─▶  web / social search  ─▶  re-encode & score  ─▶  keccak256  ─▶  on-chain anchor  ─▶  re-verify
 ```
 
+**[SETUP.md](SETUP.md)** — get running in ten minutes ·
+**[ARCHITECTURE.md](ARCHITECTURE.md)** — how it works and why
+
 Built for HH Goa 2026 shortlisting task 3.
+
+![Pipeline — animated](docs/pipeline.svg)
+
+The diagram is plain SVG with SMIL timing — the amber pulse travelling the
+pipeline is the probe moving between trust boundaries. The console itself:
 
 ![The console](docs/console.png)
 
@@ -45,46 +53,14 @@ and the descriptor never do.
 
 ## Running it
 
-Requires Node 20+ (developed on Node 25) and npm.
-
-```bash
-git clone <your-repo-url>
-cd facechain
-npm install
-```
-
-### 1. Add a search key
-
-```bash
-cp .env.example .env.local
-```
-
-Put a [SerpApi key](https://serpapi.com/manage-api-key) in `SERPAPI_API_KEY`. The free
-tier is 250 searches/month, which is plenty. Without a key everything else still runs —
-the Trace station just tells you it is not configured.
-
-### 2. Start the chain and deploy
-
-In one terminal:
+Full instructions — installs, the SerpApi key, verification, Amoy, troubleshooting —
+are in [SETUP.md](SETUP.md). Once installed and configured, it comes down to:
 
 ```bash
 npm run chain:node      # Hardhat node on 127.0.0.1:8545, chain id 31337
-```
-
-In another:
-
-```bash
 npm run chain:deploy    # deploys EvidenceRegistry, writes its address into src/lib/contract/
-```
-
-### 3. Start the app
-
-```bash
 npm run dev             # http://localhost:3000
 ```
-
-The header shows whether the search backend, the chain, and the registry are all live
-before you start.
 
 ---
 
