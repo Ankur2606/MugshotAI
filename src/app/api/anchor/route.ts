@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { parseAbiItem } from "viem";
 import {
   REGISTRY_ABI,
   activeTarget,
@@ -21,7 +22,7 @@ export const maxDuration = 120;
 export async function POST(req: Request) {
   const target = activeTarget();
   const address = registryAddress(target);
-  const { label } = chainConfig(target);
+  const { label, explorer } = chainConfig(target);
 
   if (!address) {
     return NextResponse.json(
@@ -55,7 +56,7 @@ export async function POST(req: Request) {
 
   try {
     // Refuse early with a clear message rather than letting the revert surface.
-    const [exists] = (await client.readContract({
+    const [exists, timestamp, submitter, similarityBp] = (await client.readContract({
       address,
       abi: REGISTRY_ABI,
       functionName: "verify",
@@ -63,11 +64,53 @@ export async function POST(req: Request) {
     })) as [boolean, bigint, string, number];
 
     if (exists) {
+      let txHash: string | null = null;
+      let blockNumber: string | null = null;
+      try {
+        const latestBlock = await client.getBlockNumber();
+        const fromBlock = latestBlock > BigInt(50000) ? latestBlock - BigInt(49999) : BigInt(0);
+        const logs = await client.getLogs({
+          address,
+          event: parseAbiItem(
+            "event Anchored(bytes32 indexed bundleHash, address indexed submitter, uint64 timestamp, uint32 similarityBp, string matchUrl)"
+          ),
+          args: {
+            bundleHash: digest,
+          },
+          fromBlock,
+        });
+        if (logs.length > 0) {
+          const matchLog = logs[logs.length - 1];
+          txHash = matchLog.transactionHash;
+          blockNumber = matchLog.blockNumber ? matchLog.blockNumber.toString() : null;
+        }
+      } catch (err) {
+        console.warn("Could not query historical Anchored logs:", err);
+      }
+
+      const explorerUrl = txHash
+        ? explorerTxUrl(txHash, target)
+        : explorer
+          ? `${explorer}/address/${address}`
+          : "";
+
       return NextResponse.json(
         {
           error: "This exact bundle is already anchored. Re-run the scan to produce a new one.",
           digest,
           alreadyAnchored: true,
+          existingRecord: {
+            digest,
+            txHash,
+            blockNumber,
+            timestamp: Number(timestamp),
+            submitter,
+            similarityBp: Number(similarityBp),
+            contract: address,
+            network: label,
+            chainId: chainConfig(target).chain.id,
+            explorerUrl,
+          },
         },
         { status: 409 },
       );
