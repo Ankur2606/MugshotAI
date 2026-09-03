@@ -5,6 +5,17 @@ const hre = require("hardhat");
 
 async function main() {
   const net = hre.network.name;
+
+  if (net !== "localhost") {
+    const wallets = await hre.viem.getWalletClients();
+    if (!wallets || wallets.length === 0) {
+      throw new Error(
+        `No valid signing account for network '${net}'.\n` +
+        `Make sure DEPLOYER_PRIVATE_KEY in .env.local is your 64-character PRIVATE KEY (not the 42-char public wallet address).`
+      );
+    }
+  }
+
   const registry = await hre.viem.deployContract("EvidenceRegistry");
   const address = registry.address;
 
