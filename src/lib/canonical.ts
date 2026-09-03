@@ -5,6 +5,10 @@ import { keccak256, toHex, sha256 } from "viem";
  * Every field is a string or an integer. There are deliberately no floating
  * point numbers: a float that round-trips through JSON on a different runtime
  * can serialize differently and silently break re-verification.
+ *
+ * All fields are strictly content-derived and idempotent. Time is deliberately
+ * excluded from the bundle: Ethereum's on-chain block.timestamp serves as the
+ * single, tamper-proof source of temporal truth.
  */
 export type EvidenceBundle = {
   /** bundle schema version */
@@ -27,8 +31,6 @@ export type EvidenceBundle = {
   encoder: string;
   /** which search backend found the match */
   provider: string;
-  /** unix seconds, when the probe was captured */
-  capturedAt: number;
 };
 
 /**
