@@ -24,7 +24,6 @@ const B = {
   similarityBp: 7314,
   encoder: "human/blazeface+facemesh+faceres",
   provider: "serpapi:google_lens",
-  capturedAt: Math.floor(Date.now() / 1000),
 };
 const post = async (p, body) => {
   const r = await fetch(`${BASE}/api/${p}`, {
