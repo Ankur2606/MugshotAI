@@ -107,8 +107,9 @@ append-only digest log for enumeration and emits an `Anchored` event.
 `verify(bytes32)` returns `(exists, timestamp, submitter, similarityBp)`.
 
 `src/lib/chain.ts` selects the network: local Hardhat (chain id 31337, viem wallet
-falls back to Hardhat's well-known account 0) is the default; `CHAIN_TARGET=amoy`
-switches to Polygon Amoy (chain id 80002) with a `DEPLOYER_PRIVATE_KEY` from
+falls back to Hardhat's well-known account 0) is the default; `CHAIN_TARGET=sepolia`
+switches to Ethereum Sepolia (chain id 11155111) with live Etherscan links; `CHAIN_TARGET=amoy`
+switches to Polygon Amoy (chain id 80002). Deployments and anchors use a `DEPLOYER_PRIVATE_KEY` from
 `.env.local`. Same contract, same code path.
 
 Only the digest, the similarity score, and the matched URL go on chain. The probe
