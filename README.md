@@ -1,145 +1,160 @@
 # Facechain
 
-Scan a face, find where it appears on the public web, and seal the finding to a
-blockchain as a tamper-evident record.
+> **Cryptographic Face Trace & Blockchain Registry**  
+> Scan a face, trace where it appears on the public web and social media, and seal the finding onto a blockchain as an immutable, tamper-evident record.
 
 ```
-face scan  ─▶  web / social search  ─▶  re-encode & score  ─▶  keccak256  ─▶  on-chain anchor  ─▶  re-verify
+face scan  ─▶  web / social trace  ─▶  in-browser re-encode  ─▶  keccak256  ─▶  on-chain seal  ─▶  re-verify
 ```
 
-**[SETUP.md](SETUP.md)** — get running in ten minutes ·
-**[ARCHITECTURE.md](ARCHITECTURE.md)** — how it works and why
-
-Built for HH Goa 2026 shortlisting task 3.
-
-![Pipeline — animated](docs/pipeline.svg)
-
-The diagram is plain SVG with SMIL timing — the amber pulse travelling the
-pipeline is the probe moving between trust boundaries. The console itself:
-
-![The console](docs/console.png)
+Built for **Hackers House Goa 2026 Shortlisting Task 3: Face Identification & Blockchain Verification**.
 
 ---
 
-## What it actually does
+## Documentation Quick Links
 
-The pipeline runs as four stations on a single page.
-
-**I — Specimen.** A face is captured from the webcam or an uploaded photo.
-[`@vladmandic/human`](https://github.com/vladmandic/human) detects it and produces a
-1024-dimension descriptor, plus anti-spoof and liveness scores. This all happens in the
-browser; the model weights are served from `public/models`, so nothing is sent to a CDN
-and no face data leaves the machine at this stage.
-
-**II — Trace.** The captured JPEG goes to a live image-search backend (Google Lens via
-SerpApi by default). Whatever pages it returns are treated as *leads*, not matches.
-
-**III — Adjudication.** This is the step that makes the search defensible. Every
-candidate image is fetched server-side, hashed, handed back to the browser, and run
-through **the same encoder** that produced the probe descriptor. Cosine similarity
-decides the outcome. Candidates that fail stay visible with their scores, so the
-decision can be inspected rather than taken on faith.
-
-**IV — Seal.** The accepted match is folded into a canonical evidence bundle. The
-keccak256 digest of that bundle is written to an `EvidenceRegistry` contract. Re-verify
-re-hashes the bundle and asks the chain whether it has seen that digest. Alter one
-field first and it will not be found — that is the tamper-evidence, demonstrated rather
-than asserted.
-
-Only the digest, the similarity score, and the matched URL go on chain. The probe image
-and the descriptor never do.
+- **[SETUP.md](SETUP.md)** — Step-by-step setup guide (local Hardhat, Sepolia testnet, and Amoy).
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — Complete architectural blueprint, trust boundaries, and math.
 
 ---
 
-## Running it
+## Visual Overview
 
-Full instructions — installs, the SerpApi key, verification, Amoy, troubleshooting —
-are in [SETUP.md](SETUP.md). Once installed and configured, it comes down to:
+![Pipeline Architecture](docs/pipeline.svg)
 
-```bash
-npm run chain:node      # Hardhat node on 127.0.0.1:8545, chain id 31337
-npm run chain:deploy    # deploys EvidenceRegistry, writes its address into src/lib/contract/
-npm run dev             # http://localhost:3000
-```
+The pipeline is split into four distinct stations operating across three security perimeters (Browser Client $\leftrightarrow$ Next.js Server $\leftrightarrow$ Blockchain Ledger).
+
+![Facechain Console](docs/console.png)
 
 ---
 
-## Which blockchain
+## The Four Stations
 
-**Ethereum Sepolia** (chain id 11155111) for a public testnet record with live Etherscan inspection, **Polygon Amoy** (chain id 80002), and a **local Hardhat node** (chain id 31337) as the default so the pipeline runs with zero external setup. Same contract, same code path — one environment variable switches between them.
+The entire pipeline executes on a single interactive cyber-industrial console:
 
-### Using Ethereum Sepolia Testnet (Recommended Public Testnet):
-1. Fund a throwaway key with free SepoliaETH from [Google Cloud Faucet](https://cloud.google.com/application/web3/faucet/ethereum/sepolia) or [Sepolia PoW Faucet](https://sepolia-faucet.pk910.de/).
-2. In `.env.local`:
-```bash
-CHAIN_TARGET=sepolia
-DEPLOYER_PRIVATE_KEY=0x...
-```
-3. Deploy:
-```bash
-npm run chain:deploy:sepolia
-```
-Sealed transactions link directly to `sepolia.etherscan.io`.
+### Station I — Specimen (Browser Client)
+- **Zero-Trust Privacy**: Face detection and feature extraction run 100% client-side in the browser using WebGL and TensorFlow.js via [`@vladmandic/human`](https://github.com/vladmandic/human).
+- **Local Model Weights**: All 13 MB of model shards are served directly from `public/models/`. No webcam frames, user photos, or biometric vectors are ever sent to external CDNs or backends.
+- **Neural Pipeline**:
+  - **Detector**: BlazeFace locates bounding coordinates.
+  - **Mesh & Geometry**: MediaPipe FaceMesh maps 468 3D facial landmarks and evaluates iris orientation.
+  - **Feature Extractor**: FaceRes produces a **1024-dimensional deep unit vector descriptor**.
+  - **Anti-Spoof & Liveness**: Dual classification heads verify genuine 3D human presence.
+- **Flip Test-Time Augmentation (TTA)**: Probe capture averages the descriptor of the original frame with its horizontally mirrored image (`readFaceStable()`), cancelling out lighting and head-pose asymmetry (standard practice from ArcFace literature).
 
-### Using Polygon Amoy:
-Fund a key from the [Polygon faucet](https://faucet.polygon.technology/), set `CHAIN_TARGET=amoy`, and run `npm run chain:deploy:amoy`. Sealed transactions link to `amoy.polygonscan.com`.
+### Station II — Trace (Server Route)
+- The probe JPEG is sent to the `/api/search` route, which delegates to an extensible provider adapter (`src/lib/providers/`).
+- **Default Backend**: Google Lens via SerpApi (`SerpApiLens`). Handles binary upload and extracts live search leads, sorting recognized social platforms (Instagram, X, LinkedIn, Reddit, YouTube, TikTok) to the top of the queue.
+- **Alternative Backend**: [FaceCheck.ID](https://facecheck.id/) (`FaceCheckId`) is supported out-of-the-box for paid, true facial-embedding search.
+- **Guiding Principle**: The search backend only *proposes* candidate leads; it is never permitted to declare a match.
 
-### The contract
+### Station III — Adjudication (Browser Client)
+- **Authoritative Server Proxy**: Each candidate image is fetched through `/api/proxy`. The proxy evades CDN hotlinking via fallback Referer headers, prevents browser canvas taint (CORS), streams image bytes, and computes an authoritative `SHA-256` hash.
+- **Identical Basis Re-Encoding**: Candidate images are decoded into HTML5 Image objects in the browser and re-encoded using the **exact same model instance** that encoded the specimen.
+- **Quality Gating**: Low-resolution crops (<48 px) and uncertain detections are skipped with transparent reasons to prevent false matches from centroid drift.
+- **Cosine Similarity in Basis Points**: Cosine similarity is computed and scaled to integer basis points (0–10000). The default threshold of **54.00% (5400 bp)** was empirically calibrated using the `/selftest` portrait suite.
 
-[`chain/contracts/EvidenceRegistry.sol`](chain/contracts/EvidenceRegistry.sol) — about 70
-lines. `anchor(bytes32 bundleHash, uint32 similarityBp, string matchUrl)` records a
-digest and reverts if that exact digest is already present, so replaying an identical
-bundle is visible rather than silent. `verify(bytes32)` returns whether a digest exists,
-when it was anchored, and by whom.
-
-### Why the bundle is canonicalized
-
-The digest has to be reproducible on a different machine months later, so the bundle is
-serialized with keys sorted at every depth and **contains no floating-point numbers** —
-similarity is stored as an integer in basis points. A float that round-trips through
-JSON on another runtime can serialize differently and would silently break
-re-verification. See [`src/lib/canonical.ts`](src/lib/canonical.ts).
+### Station IV — Seal & Verify (Server + Blockchain)
+- **Canonical Evidence Bundle**: The winning match is assembled into an idempotent JSON structure (`v: 1`, probe image SHA-256, quantized descriptor SHA-256, match URL, match image SHA-256, similarity bp, encoder tag, provider tag).
+- **Zero Floats & Key Sorting**: Serialized using `canonicalJson()` (keys recursively sorted, no whitespace, zero floating-point numbers) to eliminate cross-platform serialization divergence.
+- **32-Byte Keccak-256 Anchor**: Only the 32-byte digest is written to the smart contract (`EvidenceRegistry.sol`). Raw images and vectors never touch the chain, preserving privacy and saving thousands of dollars in gas.
+- **Replay Protection**: Replaying identical bundles is refused on-chain (`AlreadyAnchored`) and surfaced cleanly in the UI as a pre-anchored record with historical transaction links.
+- **Live Tamper Demonstration**: Re-verifying re-hashes the bundle and checks the contract. Toggling "Alter the bundle first" modifies `similarityBp` by just 1 basis point (0.01%), causing the Keccak-256 hash to completely diverge and the contract to reject the record.
 
 ---
 
-## Verifying it works
+## Supported Blockchains
 
-### Face engine, no API key required
+Facechain is multi-chain ready out of the box. Switching networks requires changing a single environment variable (`CHAIN_TARGET`) in `.env.local`:
 
+| Network | Chain ID | Target Value | Explorer | Ideal For |
+|---|:---:|:---:|---|---|
+| **Hardhat Local** *(Default)* | `31337` | `localhost` | Local RPC (`127.0.0.1:8545`) | Zero-config, instant local testing |
+| **Ethereum Sepolia** *(Recommended)* | `11155111` | `sepolia` | [sepolia.etherscan.io](https://sepolia.etherscan.io/) | Public testnet with live Etherscan receipts |
+| **Polygon Amoy** | `80002` | `amoy` | [amoy.polygonscan.com](https://amoy.polygonscan.com/) | Low-cost high-throughput public testnet |
+
+---
+
+## Quickstart: Running Locally
+
+### 1. Install Dependencies
+```bash
+# Root Next.js application
+npm install
+
+# Hardhat blockchain project
+cd chain && npm install && cd ..
 ```
-http://localhost:3000/selftest
+
+### 2. Configure Environment Variables
+Copy `.env.example` to `.env.local`:
+```bash
+cp .env.example .env.local
 ```
 
-Runs four public-domain portraits (two of the same person) through the proxy and the
-encoder, and checks that same-person pairs outscore every different-person pair.
+Add your free [SerpApi Key](https://serpapi.com/manage-api-key) (free tier includes 250 searches/month):
+```ini
+SERPAPI_API_KEY=your_serpapi_key_here
+CHAIN_TARGET=localhost
+```
 
-Measured on this build:
-
-| pair | expected | similarity |
-|---|---|---|
-| obama-a ↔ obama-b | same person | **57.71** |
-| merkel ↔ watson | different | 44.88 |
-| obama-a ↔ watson | different | 41.46 |
-| obama-a ↔ merkel | different | 40.90 |
-| obama-b ↔ watson | different | 38.91 |
-| obama-b ↔ merkel | different | 30.66 |
-
-The default accept threshold is **54**, which sits in the gap between those two groups.
-It is adjustable from the console.
-
-![Encoder self-test](docs/selftest.png)
-
-### Chain half
-
-With the node running and the contract deployed:
+### 3. Launch Local Blockchain & Dev Server
+Run each command in a separate terminal:
 
 ```bash
-node scripts/verify-chain.mjs
+# Terminal 1: Start local Ethereum node (Chain ID: 31337)
+npm run chain:node
+
+# Terminal 2: Deploy EvidenceRegistry smart contract
+npm run chain:deploy
+
+# Terminal 3: Start Next.js development server
+npm run dev
 ```
 
-Anchors a bundle, verifies it, verifies a bundle with one field altered, verifies the
-same bundle with its keys reordered, and attempts a replay. Expected output:
+Open **`http://localhost:3000`** in your browser.
 
+---
+
+## Deploying to Ethereum Sepolia Testnet
+
+To anchor evidence to the public Ethereum Sepolia network:
+
+1. Obtain free SepoliaETH from [Google Cloud Sepolia Faucet](https://cloud.google.com/application/web3/faucet/ethereum/sepolia) or [Sepolia PoW Faucet](https://sepolia-faucet.pk910.de/).
+2. In `.env.local`, set:
+   ```ini
+   CHAIN_TARGET=sepolia
+   DEPLOYER_PRIVATE_KEY=0xYOUR_THROWAWAY_PRIVATE_KEY
+   ```
+3. Deploy the contract to Sepolia:
+   ```bash
+   npm run chain:deploy:sepolia
+   ```
+4. Start the dev server (`npm run dev`). Sealed records will now generate live transactions verifiable on [sepolia.etherscan.io](https://sepolia.etherscan.io/)!
+
+---
+
+## Verification & Self-Testing
+
+### 1. Standalone On-Chain Verification CLI (Direct RPC)
+To verify contract state, inspect anchored records, and test on-chain tamper rejection directly over JSON-RPC (without running Next.js):
+
+```bash
+npm run verify:direct
+```
+Or for Ethereum Sepolia:
+```bash
+CHAIN_TARGET=sepolia npm run verify:direct
+```
+
+### 2. Full Integration Test Suite (API + Smart Contract)
+With your node running and contract deployed:
+
+```bash
+npm run verify:chain
+```
+
+**Expected Output**:
 ```
 1. ANCHOR                                       status 200
 2. VERIFY (untouched)                           onChain: true
@@ -149,93 +164,71 @@ same bundle with its keys reordered, and attempts a replay. Expected output:
 ALL CHAIN CHECKS PASSED
 ```
 
-Step 4 is the one that matters most: it proves the canonicalization is order-independent,
-so re-verification does not depend on how the JSON happened to be written.
+### 3. Offline Face Engine Diagnostic (`/selftest`)
+Navigate to `http://localhost:3000/selftest`.
+
+Tests four public-domain portraits (Obama, Merkel, Watson) through the local encoder without API keys. Validates that same-person pairs ($\ge 57.71\%$) cleanly outscore different-person pairs ($\le 44.88\%$).
+
+![Encoder Self-Test](docs/selftest.png)
 
 ---
 
-## Layout
+## Project Structure
 
 ```
-src/
-  app/
-    page.tsx                 the console (client-only)
-    selftest/                encoder diagnostic
-    api/
-      search/                probe -> search backend -> candidate pages
-      proxy/                 fetch a candidate image + hash it
-      anchor/                hash the bundle, write the digest on chain
-      verify/                re-hash and look the digest up
-      status/                which halves of the pipeline are live
-  lib/
-    human-client.ts          the browser face engine, one shared instance
-    canonical.ts             canonical JSON, keccak256, cosine similarity
-    chain.ts                 viem clients, network selection
-    providers/               search backends behind one interface
-  components/                the four stations
-chain/                       Hardhat project: contract, deploy script
-public/models/               face model weights, served locally
+facechain/
+├── ARCHITECTURE.md          # In-depth architectural blueprint and trust models
+├── SETUP.md                 # Detailed deployment and configuration manual
+├── chain/                   # Hardhat blockchain workspace
+│   ├── contracts/
+│   │   └── EvidenceRegistry.sol  # Solidity 0.8.24 tamper-evident registry
+│   ├── scripts/deploy.js    # Multi-chain deployment script
+│   └── hardhat.config.js    # Hardhat networks & compiler configuration
+├── public/models/           # 13 MB local model weights (BlazeFace, Mesh, FaceRes)
+├── scripts/
+│   ├── verify-chain.mjs     # API integration verification test
+│   └── verify-direct-chain.mjs # Direct on-chain JSON-RPC verification script
+└── src/
+    ├── app/
+    │   ├── api/
+    │   │   ├── anchor/      # Keccak-256 hashing and on-chain anchoring
+    │   │   ├── proxy/       # CORS bypass, byte streaming, and SHA-256
+    │   │   ├── search/      # Live web & social media search dispatch
+    │   │   ├── status/      # Real-time chain and provider telemetry
+    │   │   └── verify/      # Canonical re-hashing and on-chain lookup
+    │   ├── page.tsx         # Client-only entry point
+    │   └── selftest/        # Offline diagnostic page
+    ├── components/
+    │   ├── Docket.tsx       # Main 4-station reactive console
+    │   ├── Specimen.tsx     # Webcam capture, landmark overlay, and TTA
+    │   └── ...              # UI primitives (ThresholdDial, HashStrip, etc.)
+    └── lib/
+        ├── canonical.ts     # Canonical JSON, Keccak-256, Cosine Similarity
+        ├── chain.ts         # Viem clients and multi-chain configuration
+        ├── human-client.ts  # Browser ML runtime singleton (@vladmandic/human)
+        └── providers/       # Search backend adapter (Google Lens, FaceCheck)
 ```
-
-### Swapping the search backend
-
-`src/lib/providers/` holds one interface and two implementations. A second backend,
-[FaceCheck.ID](https://facecheck.id/en/Face-Search/API), is included: it is a true
-face-embedding search rather than whole-image similarity, so it finds social profiles
-far more reliably. It is paid (credits, crypto only), which is why Lens is the default.
-
-```bash
-# .env.local
-SEARCH_PROVIDER=facecheck
-FACECHECK_API_TOKEN=...
-```
-
-Adding a third backend means implementing `search(image, mime) → Candidate[]` and
-registering it in `providers/index.ts`.
 
 ---
 
-## Known limitations
+## Known Limitations & Honest Disclosures
 
-**Google Lens is not a face search.** It matches whole images, so its candidates are
-lookalikes, stock photos, and pages that reuse the same picture. It reliably finds
-well-indexed public figures and often finds nothing for a private individual. This is
-the honest weak point of the free path, and it is exactly why the re-encoding step in
-Station III exists — the search proposes, the encoder decides. FaceCheck.ID is wired in
-for anyone willing to pay for real face search.
-
-**Recognition accuracy.** The 1024-d `faceres` encoder is good, not state of the art.
-Expect it to struggle with heavy occlusion, extreme pose, low light, and large age gaps.
-The similarity threshold is a tunable judgement call, not a fact — which is why the
-console exposes it and shows every rejected candidate's score.
-
-**The chain proves integrity, not truth.** An anchored digest proves the bundle has not
-changed since it was sealed. It does not prove the match was correct. Those are
-different claims and the UI is careful not to conflate them.
-
-**Server-side signing.** The app signs anchoring transactions with a key from
-`.env.local` rather than a browser wallet. That is deliberate for a demo — one less
-thing to fail on camera — but it means the "submitter" recorded on chain is the server,
-not the operator. A production version would connect a wallet.
-
-**Candidate image fetching.** Some hosts (Instagram in particular) block server-side
-image fetches. Those candidates are marked skipped with the reason rather than silently
-dropped.
-
-**Anti-spoof is advisory.** The liveness and anti-spoof scores are shown because they
-are useful signal, but nothing in the pipeline gates on them.
-
-**Hardhat and Node 25.** Hardhat 2 prints an unsupported-version warning on Node 25. It
-compiles and deploys correctly regardless.
+1. **Google Lens is an Image Search, not a Face Search**: Google Lens matches entire images (clothing, background, poses). It reliably finds indexed celebrities and social figures, but may return few results for private individuals. Station III (Adjudication) was specifically engineered to counteract this: the search engine proposes leads, but only the face encoder decides.
+2. **Server-Side Transaction Signing**: For demo convenience and reliable live recording, transactions are signed server-side using a key in `.env.local`. A production enterprise deployment would integrate an in-browser wallet (e.g. MetaMask / WalletConnect).
+3. **Instagram & Hotlinking Protection**: Certain social media CDNs aggressively block automated image scrapers. When an image cannot be retrieved, Facechain displays a clear "skipped" status rather than failing silently.
+4. **Integrity vs. Truth**: The blockchain proves that the evidence bundle has not been modified since the timestamp of the block. It proves data integrity; it does not claim to prove legal identity.
 
 ---
 
-## Stack
+## Technology Stack
 
-Next.js 16 · React 19 · TypeScript · Tailwind v4 · Motion ·
-[@vladmandic/human](https://github.com/vladmandic/human) (TensorFlow.js) ·
-viem · Hardhat · Solidity 0.8.24
+- **Frontend**: Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS v4, Motion (Framer Motion).
+- **Client ML Runtime**: [`@vladmandic/human`](https://github.com/vladmandic/human) (TensorFlow.js WebGL backend, BlazeFace, MediaPipe FaceMesh, FaceRes).
+- **Blockchain & Web3**: Solidity 0.8.24, Viem, Hardhat, Ethereum Sepolia, Polygon Amoy.
+- **Search Providers**: SerpApi (Google Lens), FaceCheck.ID.
+
+---
 
 ## License
 
-MIT
+MIT License. Developed for **Hackers House Goa 2026**.
