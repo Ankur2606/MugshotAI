@@ -68,6 +68,9 @@ type Seal = {
   chainId: number;
   explorerUrl: string;
   anchoredAt: number;
+  isExisting?: boolean;
+  submitter?: string;
+  similarityBp?: number;
 };
 
 type Verified = {
@@ -154,7 +157,6 @@ export function Docket() {
       similarityBp: best.similarityBp,
       encoder: ENCODER_ID,
       provider: traceMeta.provider,
-      capturedAt: probe.capturedAt,
     };
   }, [probe, best, traceMeta]);
 
@@ -309,6 +311,23 @@ export function Docket() {
       const json = await res.json();
       if (!res.ok) {
         setSealError(json.error ?? "Anchoring failed.");
+        if (json.alreadyAnchored && json.existingRecord) {
+          setSeal({
+            digest: json.existingRecord.digest,
+            txHash: json.existingRecord.txHash || "Previously Sealed (On-Chain)",
+            blockNumber: json.existingRecord.blockNumber ? `#${json.existingRecord.blockNumber}` : "Historical",
+            gasUsed: "— (pre-anchored)",
+            contract: json.existingRecord.contract,
+            network: json.existingRecord.network,
+            chainId: json.existingRecord.chainId,
+            explorerUrl: json.existingRecord.explorerUrl,
+            anchoredAt: json.existingRecord.timestamp,
+            isExisting: true,
+            submitter: json.existingRecord.submitter,
+            similarityBp: json.existingRecord.similarityBp,
+          });
+          refreshStatus();
+        }
         return;
       }
       setSeal(json);
@@ -446,7 +465,7 @@ export function Docket() {
         )}
 
         {bundle && best && (
-          <div className="grid gap-8 lg:grid-cols-[1fr_360px]">
+          <div className="grid gap-8 lg:grid-cols-[1fr_380px]">
             <div>
               <span className="eyebrow">match of record</span>
               <a
@@ -488,6 +507,7 @@ export function Docket() {
                 />
               )}
               <HashStrip digest={digest} label="bundle digest · keccak256" />
+              <BundleMetadataInspector bundle={bundle} />
             </div>
           </div>
         )}
@@ -509,7 +529,7 @@ export function Docket() {
             disabled={!bundle || sealing || !chainReady || Boolean(seal)}
             className="w-full sm:w-auto"
           >
-            {sealing ? "Writing…" : seal ? "Sealed" : "Seal to chain"}
+            {sealing ? "Writing…" : seal?.isExisting ? "Already Sealed" : seal ? "Sealed" : "Seal to chain"}
           </ConsoleButton>
           {!chainReady && (
             <span className="datum text-reject">
@@ -521,7 +541,18 @@ export function Docket() {
         </div>
 
         {sealError && (
-          <p className="mt-5 border-l-2 border-reject pl-3 text-[13px] text-bone">{sealError}</p>
+          <p
+            className={`mt-5 border-l-2 pl-3 text-[13px] text-bone ${
+              seal?.isExisting ? "border-amber" : "border-reject"
+            }`}
+          >
+            {seal?.isExisting && (
+              <span className="mr-2 font-mono text-[11px] font-semibold uppercase tracking-wider text-amber">
+                Notice:
+              </span>
+            )}
+            {sealError}
+          </p>
         )}
 
         <AnimatePresence>
@@ -533,23 +564,47 @@ export function Docket() {
               className="mt-7 border border-rule bg-bench"
             >
               <div className="flex items-center justify-between border-b border-rule px-5 py-3">
-                <span className="eyebrow">on-chain receipt</span>
+                <span className="eyebrow flex items-center gap-2">
+                  {seal.isExisting ? "previously sealed on-chain record" : "on-chain receipt"}
+                  {seal.isExisting && (
+                    <span className="rounded border border-amber/30 bg-amber/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-amber">
+                      Pre-anchored
+                    </span>
+                  )}
+                </span>
                 <span className="font-mono text-[11px] text-verdict">
                   {seal.network} · chain {seal.chainId}
                 </span>
               </div>
               <dl className="grid gap-x-8 gap-y-4 p-5 sm:grid-cols-2">
+                <Fact label="digest (sealed id)" value={seal.digest} mono wrap accent />
                 <Fact label="transaction" value={seal.txHash} mono wrap />
                 <Fact label="contract" value={seal.contract} mono wrap />
                 <Fact label="block" value={seal.blockNumber} mono />
-                <Fact label="gas used" value={seal.gasUsed} mono />
+                {seal.submitter && <Fact label="submitter" value={seal.submitter} mono wrap />}
+                {seal.anchoredAt ? (
+                  <Fact
+                    label="sealed at"
+                    value={new Date(seal.anchoredAt * 1000).toISOString().replace(".000Z", " UTC")}
+                    mono
+                  />
+                ) : null}
+                {seal.similarityBp !== undefined ? (
+                  <Fact
+                    label="on-chain similarity"
+                    value={`${(seal.similarityBp / 100).toFixed(2)}% (${seal.similarityBp} bp)`}
+                    mono
+                  />
+                ) : (
+                  <Fact label="gas used" value={seal.gasUsed} mono />
+                )}
               </dl>
               {seal.explorerUrl && (
                 <a
                   href={seal.explorerUrl}
                   target="_blank"
                   rel="noreferrer noopener"
-                  className="block border-t border-rule px-5 py-3 font-mono text-[11px] uppercase tracking-widest text-amber hover:bg-amber hover:text-ink"
+                  className="block border-t border-rule px-5 py-3 font-mono text-[11px] uppercase tracking-widest text-amber hover:bg-amber hover:text-ink transition-colors"
                 >
                   {seal.network.includes("Sepolia")
                     ? "Open on Etherscan (Sepolia) ↗"
@@ -660,6 +715,230 @@ export function Docket() {
         </footer>
       </div>
     </>
+  );
+}
+
+/**
+ * Bundle Metadata Inspector: Forensic breakdown of all 10 key-value pairs
+ * that compose the canonical evidence bundle before Keccak-256 hashing.
+ */
+function BundleMetadataInspector({ bundle }: { bundle: EvidenceBundle }) {
+  const [open, setOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<"kv" | "json">("kv");
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  const copyValue = useCallback((text: string, key: string) => {
+    void navigator.clipboard.writeText(text);
+    setCopiedKey(key);
+    setTimeout(() => {
+      setCopiedKey((curr) => (curr === key ? null : curr));
+    }, 1500);
+  }, []);
+
+  const fields: Array<{
+    key: keyof EvidenceBundle;
+    label: string;
+    description: string;
+    value: string;
+    isUrl?: boolean;
+  }> = [
+    {
+      key: "probeImageSha256",
+      label: "probeImageSha256",
+      description: "SHA-256 of probe JPEG bytes",
+      value: bundle.probeImageSha256,
+    },
+    {
+      key: "probeDescriptorSha256",
+      label: "probeDescriptorSha256",
+      description: "Quantized probe 1024-d face embedding hash",
+      value: bundle.probeDescriptorSha256,
+    },
+    {
+      key: "matchImageSha256",
+      label: "matchImageSha256",
+      description: "SHA-256 of candidate matched image bytes",
+      value: bundle.matchImageSha256,
+    },
+    {
+      key: "matchUrl",
+      label: "matchUrl",
+      description: "Public web URL of matched finding",
+      value: bundle.matchUrl,
+      isUrl: true,
+    },
+    {
+      key: "matchSource",
+      label: "matchSource",
+      description: "Matched domain host",
+      value: bundle.matchSource,
+    },
+    {
+      key: "matchTitle",
+      label: "matchTitle",
+      description: "Matched post or page title",
+      value: bundle.matchTitle,
+    },
+    {
+      key: "similarityBp",
+      label: "similarityBp",
+      description: "Cosine face similarity (basis points / %)",
+      value: `${bundle.similarityBp} bp (${(bundle.similarityBp / 100).toFixed(2)}%)`,
+    },
+    {
+      key: "encoder",
+      label: "encoder",
+      description: "Face descriptor model",
+      value: bundle.encoder,
+    },
+    {
+      key: "provider",
+      label: "provider",
+      description: "Visual search backend provider",
+      value: bundle.provider,
+    },
+    {
+      key: "v",
+      label: "v",
+      description: "Evidence bundle schema version",
+      value: String(bundle.v),
+    },
+  ];
+
+  return (
+    <div className="mt-4 border-t border-rule pt-3.5">
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="group flex w-full items-center justify-between gap-2 text-left transition-colors"
+        aria-expanded={open}
+      >
+        <span className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-bone group-hover:text-amber">
+          <motion.span
+            aria-hidden
+            className="inline-block text-[10px] text-amber"
+            initial={false}
+            animate={{ rotate: open ? 90 : 0 }}
+            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+          >
+            ▸
+          </motion.span>
+          Bundle Metadata Inspector
+        </span>
+        <span className="font-mono text-[10px] uppercase tracking-widest text-dim">
+          {open ? "hide" : "10 keys · inspect"}
+        </span>
+      </button>
+
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="mt-3 border border-rule bg-ink/70 p-3">
+              <div className="flex items-center justify-between border-b border-rule pb-2">
+                <div className="flex items-center gap-1.5 font-mono text-[10px]">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("kv")}
+                    className={`px-2 py-0.5 uppercase tracking-wider transition-colors ${
+                      viewMode === "kv"
+                        ? "bg-bench-hi text-amber border border-rule-hi"
+                        : "text-dim hover:text-bone"
+                    }`}
+                  >
+                    Key-Value
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("json")}
+                    className={`px-2 py-0.5 uppercase tracking-wider transition-colors ${
+                      viewMode === "json"
+                        ? "bg-bench-hi text-amber border border-rule-hi"
+                        : "text-dim hover:text-bone"
+                    }`}
+                  >
+                    Raw JSON
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => copyValue(canonicalJson(bundle), "all-json")}
+                  className="font-mono text-[10px] uppercase tracking-wider text-dim hover:text-amber transition-colors"
+                >
+                  {copiedKey === "all-json" ? "✓ Copied" : "Copy Payload"}
+                </button>
+              </div>
+
+              {viewMode === "kv" ? (
+                <div className="mt-2.5 max-h-80 space-y-2.5 overflow-y-auto pr-1">
+                  {fields.map((f) => (
+                    <div
+                      key={f.key}
+                      className="border-b border-rule/60 pb-2 last:border-b-0 last:pb-0"
+                    >
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="font-mono text-[10px] text-amber font-medium">
+                          {f.label}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => copyValue(String(bundle[f.key]), f.key)}
+                          className="font-mono text-[9px] uppercase tracking-wider text-dim hover:text-bone transition-colors"
+                          title={`Copy ${f.label}`}
+                        >
+                          {copiedKey === f.key ? (
+                            <span className="text-verdict font-semibold">✓ Copied</span>
+                          ) : (
+                            "Copy"
+                          )}
+                        </button>
+                      </div>
+                      <p className="font-mono text-[9px] text-dim">{f.description}</p>
+                      <div className="mt-1">
+                        {f.isUrl ? (
+                          <a
+                            href={f.value}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            className="font-mono text-[11px] text-bone break-all underline decoration-rule-hi underline-offset-2 hover:text-amber"
+                          >
+                            {f.value}
+                          </a>
+                        ) : (
+                          <span className="font-mono text-[11px] text-bone break-all select-all">
+                            {f.value}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-2.5">
+                  <pre className="hash max-h-80 overflow-auto whitespace-pre-wrap border border-rule/80 bg-bench/80 p-2.5 text-[10px] text-dim select-all">
+                    {canonicalJson(bundle)}
+                  </pre>
+                </div>
+              )}
+
+              <div className="mt-3 border-t border-rule/70 pt-2 text-[10px] text-dim leading-normal">
+                <span className="text-amber mr-1">✦</span>
+                <span className="font-mono text-[9px] uppercase tracking-wider text-dim">
+                  Strictly Content-Derived:
+                </span>{" "}
+                Every byte hashed is deterministic. Temporal proof is established by Ethereum{" "}
+                <code className="font-mono text-[9px] text-bone">block.timestamp</code>.
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
