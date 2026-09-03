@@ -66,24 +66,23 @@ npm run dev             # http://localhost:3000
 
 ## Which blockchain
 
-**Polygon Amoy** (chain id 80002) for a real public record, and a **local Hardhat node**
-(chain id 31337) as the default so the pipeline runs with zero external setup. Same
-contract, same code path — one environment variable switches between them.
+**Ethereum Sepolia** (chain id 11155111) for a public testnet record with live Etherscan inspection, **Polygon Amoy** (chain id 80002), and a **local Hardhat node** (chain id 31337) as the default so the pipeline runs with zero external setup. Same contract, same code path — one environment variable switches between them.
 
-To use Amoy: fund a throwaway key from the [Polygon faucet](https://faucet.polygon.technology/),
-then
-
+### Using Ethereum Sepolia Testnet (Recommended Public Testnet):
+1. Fund a throwaway key with free SepoliaETH from [Google Cloud Faucet](https://cloud.google.com/application/web3/faucet/ethereum/sepolia) or [Sepolia PoW Faucet](https://sepolia-faucet.pk910.de/).
+2. In `.env.local`:
 ```bash
-# .env.local
-CHAIN_TARGET=amoy
+CHAIN_TARGET=sepolia
 DEPLOYER_PRIVATE_KEY=0x...
 ```
-
+3. Deploy:
 ```bash
-npm run chain:deploy:amoy
+npm run chain:deploy:sepolia
 ```
+Sealed transactions link directly to `sepolia.etherscan.io`.
 
-Sealed transactions then link to `amoy.polygonscan.com`.
+### Using Polygon Amoy:
+Fund a key from the [Polygon faucet](https://faucet.polygon.technology/), set `CHAIN_TARGET=amoy`, and run `npm run chain:deploy:amoy`. Sealed transactions link to `amoy.polygonscan.com`.
 
 ### The contract
 
