@@ -35,7 +35,9 @@ export async function POST(req: Request) {
   const wallet = walletClient(target);
   if (!wallet) {
     return NextResponse.json(
-      { error: `No signing key for ${label}. Set DEPLOYER_PRIVATE_KEY in .env.local.` },
+      {
+        error: `No valid signing key for ${label}. Set DEPLOYER_PRIVATE_KEY (64-character private key) in .env.local.`,
+      },
       { status: 503 },
     );
   }
