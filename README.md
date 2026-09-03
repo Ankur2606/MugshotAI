@@ -7,7 +7,7 @@
 face scan  ─▶  web / social trace  ─▶  in-browser re-encode  ─▶  keccak256  ─▶  on-chain seal  ─▶  re-verify
 ```
 
-Built for **Hackers House Goa 2026 Shortlisting Task 3: Face Identification & Blockchain Verification**.
+Built for cracked devs who gonna judge us for task 3
 
 ---
 
@@ -231,4 +231,4 @@ facechain/
 
 ## License
 
-MIT License. Developed for **Hackers House Goa 2026**.
+MIT License. Developed for Cracked Devs
