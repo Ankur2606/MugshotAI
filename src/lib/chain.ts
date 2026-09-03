@@ -7,7 +7,7 @@ import {
   type Address,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { polygonAmoy } from "viem/chains";
+import { polygonAmoy, sepolia } from "viem/chains";
 import registry from "./contract/EvidenceRegistry.json";
 import deployments from "./contract/deployments.json";
 
@@ -24,13 +24,24 @@ const hardhatLocal = defineChain({
   rpcUrls: { default: { http: ["http://127.0.0.1:8545"] } },
 });
 
-export type ChainTarget = "localhost" | "amoy";
+export type ChainTarget = "localhost" | "sepolia" | "amoy";
 
 export function activeTarget(): ChainTarget {
-  return process.env.CHAIN_TARGET === "amoy" ? "amoy" : "localhost";
+  const target = process.env.CHAIN_TARGET?.toLowerCase();
+  if (target === "sepolia") return "sepolia";
+  if (target === "amoy") return "amoy";
+  return "localhost";
 }
 
 export function chainConfig(target: ChainTarget = activeTarget()) {
+  if (target === "sepolia") {
+    return {
+      chain: sepolia,
+      rpcUrl: process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com",
+      explorer: "https://sepolia.etherscan.io",
+      label: "Ethereum Sepolia",
+    };
+  }
   if (target === "amoy") {
     return {
       chain: polygonAmoy,
@@ -49,7 +60,12 @@ export function chainConfig(target: ChainTarget = activeTarget()) {
 
 export function registryAddress(target: ChainTarget = activeTarget()): Address | null {
   const record = (deployments as Record<string, { address: string } | undefined>)[target];
-  const override = target === "amoy" ? process.env.AMOY_REGISTRY_ADDRESS : undefined;
+  const override =
+    target === "sepolia"
+      ? process.env.SEPOLIA_REGISTRY_ADDRESS
+      : target === "amoy"
+        ? process.env.AMOY_REGISTRY_ADDRESS
+        : undefined;
   const addr = override || record?.address;
   return addr ? (addr as Address) : null;
 }
@@ -59,12 +75,34 @@ export function publicClient(target: ChainTarget = activeTarget()) {
   return createPublicClient({ chain, transport: http(rpcUrl) });
 }
 
+export function normalizePrivateKey(raw?: string): `0x${string}` | null {
+  if (!raw) return null;
+  let clean = raw.trim();
+  if (
+    (clean.startsWith('"') && clean.endsWith('"')) ||
+    (clean.startsWith("'") && clean.endsWith("'"))
+  ) {
+    clean = clean.slice(1, -1).trim();
+  }
+  if (!clean) return null;
+  const with0x = clean.startsWith("0x") || clean.startsWith("0X") ? clean : `0x${clean}`;
+  if (/^0x[0-9a-fA-F]{64}$/.test(with0x)) {
+    return with0x.toLowerCase() as `0x${string}`;
+  }
+  return null;
+}
+
 export function walletClient(target: ChainTarget = activeTarget()) {
   const { chain, rpcUrl } = chainConfig(target);
-  const key = process.env.DEPLOYER_PRIVATE_KEY || (target === "localhost" ? HARDHAT_ACCOUNT_0 : "");
+  const normalizedEnvKey = normalizePrivateKey(process.env.DEPLOYER_PRIVATE_KEY);
+  const key = normalizedEnvKey || (target === "localhost" ? HARDHAT_ACCOUNT_0 : null);
   if (!key) return null;
-  const account = privateKeyToAccount(key as `0x${string}`);
-  return createWalletClient({ account, chain, transport: http(rpcUrl) });
+  try {
+    const account = privateKeyToAccount(key);
+    return createWalletClient({ account, chain, transport: http(rpcUrl) });
+  } catch {
+    return null;
+  }
 }
 
 export function explorerTxUrl(hash: string, target: ChainTarget = activeTarget()) {
