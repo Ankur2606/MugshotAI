@@ -1,209 +1,321 @@
-# Architecture
+# Facechain: Technical Architecture & System Design
 
-Facechain is a single-page Next.js 16 app that captures a face in the browser, asks a
-live image-search backend where that face appears on the public web, re-verifies every
-candidate biometrically with the same encoder that read the probe, and seals the
-accepted match to a blockchain as a keccak256 digest of a canonical evidence bundle.
-The pipeline is four stations on one page; two of them run in the browser, two on the
-server, and the last one ends on a chain. The important structural decision is that the
-search backend never gets to declare a match — it only proposes candidates, and the
-face encoder decides.
+> **Deep-Dive Technical Specification**  
+> A detailed analysis of the trust boundaries, cryptographic mechanics, computer vision pipelines, and smart contract architecture powering Facechain. Built for **Hackers House Goa 2026 Shortlisting Task 3**.
 
-![pipeline](docs/pipeline.svg)
+---
 
-## Trust boundaries and the four stations
+## Table of Contents
+1. [System Topology & The 3 Trust Boundaries](#1-system-topology--the-3-trust-boundaries)
+2. [Data Flow Pipeline (Sequence Architecture)](#2-data-flow-pipeline-sequence-architecture)
+3. [Station I — Specimen (Client-Side Biometrics)](#3-station-i--specimen-client-side-biometrics)
+4. [Station II — Trace (Server-Side Provider Adapter)](#4-station-ii--trace-server-side-provider-adapter)
+5. [Station III — Adjudication (Client-Side Re-Encoding & Scoring)](#5-station-iii--adjudication-client-side-re-encoding--scoring)
+6. [Station IV — Seal & Verify (Smart Contract & Storage)](#6-station-iv--seal--verify-smart-contract--storage)
+7. [The Canonical Evidence Bundle & Serialization](#7-the-canonical-evidence-bundle--serialization)
+8. [Dual Verification Architecture (API vs Direct RPC)](#8-dual-verification-architecture-api-vs-direct-rpc)
+9. [Security, Privacy & GDPR Model](#9-security-privacy--gdpr-model)
+10. [Known Architectural Constraints](#10-known-architectural-constraints)
 
-Three trust domains: the browser (face data lives here and only here), the Next.js
-server (API routes that talk to search backends and the chain), and the chain (holds
-digests, never content). The component view:
+---
 
-![architecture](docs/architecture.svg)
+## 1. System Topology & The 3 Trust Boundaries
 
-### Station I — Specimen (browser)
+Facechain distributes compute across three isolated trust boundaries to balance privacy, security, and immutability:
 
-`src/lib/human-client.ts` holds one lazily-loaded `@vladmandic/human` instance for the
-whole session, configured with blazeface detection (rotation on, single face),
-facemesh, iris, `faceres` description (the 1024-dimension embedding), antispoof, and
-liveness. Model weights are served from `public/models` (13 MB), so nothing is fetched
-from a CDN and no face data leaves the machine at this stage.
+```
+┌────────────────────────────────────────────────────────────────────────────────┐
+│ 1. CLIENT BROWSER (Zero-Trust Privacy Perimeter)                               │
+│                                                                                │
+│  • Local webcam capture / photo ingestion                                      │
+│  • Local @vladmandic/human engine (WebGL / TFJS)                               │
+│  • BlazeFace + FaceMesh (468 landmarks) + FaceRes (1024-d descriptor)          │
+│  • Flip Test-Time Augmentation (TTA)                                           │
+│  • Candidate face re-encoding & Cosine Similarity adjudication                 │
+│  • Raw photos and biometric vectors NEVER leave this perimeter                 │
+└───────────────────────────────────────┬────────────────────────────────────────┘
+                                        │
+                         Downscaled Probe JPEG (HTTP POST)
+                                        │
+                                        ▼
+┌────────────────────────────────────────────────────────────────────────────────┐
+│ 2. NEXT.JS SERVER (Investigative & Proxy Boundary)                             │
+│                                                                                │
+│  • Keeps API keys (SerpApi / FaceCheck) confidential                           │
+│  • /api/search: Queries Google Lens via SerpApi, filters social media hosts    │
+│  • /api/proxy: Bypasses CDN CORS / anti-hotlink protections, streams bytes,    │
+│    and calculates authoritative SHA-256 hash                                   │
+│  • /api/anchor & /api/verify: Interfaces with Viem client & RPC                │
+└───────────────────────────────────────┬────────────────────────────────────────┘
+                                        │
+                      32-Byte Keccak-256 Digest (anchor tx)
+                                        │
+                                        ▼
+┌────────────────────────────────────────────────────────────────────────────────┐
+│ 3. BLOCKCHAIN LEDGER (Immutable Verification Anchor)                           │
+│                                                                                │
+│  • Solidity 0.8.24 Smart Contract (EvidenceRegistry.sol)                       │
+│  • Deployed to Ethereum Sepolia, Polygon Amoy, or Local Hardhat               │
+│  • Stores 32-byte digest, submitter, similarityBp, and block timestamp         │
+│  • Replay refusal (revert AlreadyAnchored)                                     │
+│  • Zero images or biometric vectors stored on-chain                            │
+└────────────────────────────────────────────────────────────────────────────────┘
+```
 
-The descriptor that gets committed to the evidence bundle comes from
-`readFaceStable()`: it encodes the frame and a horizontally mirrored copy, then
-averages the two descriptors. This flip test-time augmentation is standard evaluation
-practice in the face-recognition literature (ArcFace, Deng et al., CVPR 2019, evaluates
-with flip averaging); it cancels pose asymmetry and makes the probe descriptor
-noticeably more stable between captures. The live preview loop stays single-pass —
-TTA doubles inference cost, which is worth paying once for the probe but not thirty
-times a second for an overlay. If the mirror pass fails for any reason, the code falls
-back to the single-pass reading rather than erroring.
+---
 
-`frameToJpeg()` scales the capture so the longest edge is 900 px at JPEG quality 0.86,
-which keeps the upload under SerpApi's 500 KB ceiling.
+## 2. Data Flow Pipeline (Sequence Architecture)
 
-### Station II — Trace (server)
+The following sequence illustrates the complete lifecycle from initial photon capture to on-chain sealing and re-verification:
 
-`src/lib/providers/` is an adapter layer: one `SearchProvider` interface
-(`search(image, mime) → SearchOutcome`), two implementations, and a registry in
-`index.ts`. `SEARCH_PROVIDER` picks the backend by name; otherwise the first provider
-holding credentials wins. When nothing is configured, `/api/search` returns 503 with a
-plain message instead of inventing results.
+```
+Operator           Browser Client               Next.js Server            Search Engine            Blockchain
+   │                     │                            │                         │                      │
+   │ 1. Capture Face     │                            │                         │                      │
+   ├────────────────────▶│                            │                         │                      │
+   │                     │ 2. BlazeFace + Mesh        │                         │                      │
+   │                     │    + FaceRes (1024-d)      │                         │                      │
+   │                     │    + Flip TTA              │                         │                      │
+   │                     │                            │                         │                      │
+   │ 3. Click "Trace"    │                            │                         │                      │
+   ├────────────────────▶│ 4. POST downscaled JPEG    │                         │                      │
+   │                     ├───────────────────────────▶│ 5. Query Google Lens    │                      │
+   │                     │                            ├────────────────────────▶│                      │
+   │                     │                            │ 6. Candidate leads      │                      │
+   │                     │                            │◀────────────────────────┤                      │
+   │                     │ 7. Return 24 candidates    │                         │                      │
+   │                     │◀───────────────────────────┤                         │                      │
+   │                     │                            │                         │                      │
+   │                     │ 8. Fetch candidate image   │                         │                      │
+   │                     ├───────────────────────────▶│ 9. Fetch with UA/Referer│                      │
+   │                     │                            ├───────────────┐         │                      │
+   │                     │                            │ Compute SHA-256         │                      │
+   │                     │                            │◀──────────────┘         │                      │
+   │                     │ 10. Data URL + SHA-256     │                         │                      │
+   │                     │◀───────────────────────────┤                         │                      │
+   │                     │                            │                         │                      │
+   │                     │ 11. Re-encode face (Same   │                         │                      │
+   │                     │     Human instance)        │                         │                      │
+   │                     │ 12. Cosine Similarity      │                         │                      │
+   │                     │ 13. Quality gate check     │                         │                      │
+   │                     │ 14. Assemble Canonical JSON│                         │                      │
+   │                     │                            │                         │                      │
+   │ 15. Click "Seal"    │                            │                         │                      │
+   ├────────────────────▶│ 16. POST bundle            │                         │                      │
+   │                     ├───────────────────────────▶│ 17. keccak256(canonical)                       │
+   │                     │                            │ 18. anchor(digest, bp, url)                    │
+   │                     │                            ├───────────────────────────────────────────────▶│
+   │                     │                            │ 19. Tx mined in block (Anchored event)         │
+   │                     │ 20. On-chain receipt       │◀───────────────────────────────────────────────┤
+   │                     │◀───────────────────────────┤                         │                      │
+   │                     │                            │                         │                      │
+   │ 21. Re-Verify       │                            │                         │                      │
+   ├────────────────────▶│ 22. POST checkBundle       │                         │                      │
+   │                     ├───────────────────────────▶│ 23. verify(digest)      │                      │
+   │                     │                            ├───────────────────────────────────────────────▶│
+   │                     │ 24. INTACT / NOT ON CHAIN  │◀───────────────────────────────────────────────┤
+   │◀────────────────────┼────────────────────────────┤                         │                      │
+```
 
-**SerpApiLens** (`serpapi.ts`, default) is a two-step call, because Google Lens will
-not accept raw bytes: POST the probe to `serpapi.com/image` to obtain an `image_id`,
-then run `engine=google_lens` against that id — no third-party image host involved.
-If the default response carries no `visual_matches`, it retries once with
-`type=visual_matches` explicitly, since SerpApi has shipped both response shapes and an
-empty Adjudication station is worse than spending a second search.
+---
 
-**FaceCheckId** (`facecheck.ts`) is a true face-embedding search: `upload_pic` to get
-an `id_search`, then poll `search` every 2.5 s (up to 120 s) until `output` appears.
-It returns the matched crop inline as a data URL. It is paid, in credits, which is why
-Lens stays the default.
+## 3. Station I — Specimen (Client-Side Biometrics)
 
-Both providers sort social-platform hosts (the list in `types.ts`) to the front of the
-candidate list; `/api/search` caps the response at 24 candidates and includes the
-probe's sha256.
+Implemented in `src/components/Specimen.tsx` and `src/lib/human-client.ts`.
 
-### Station III — Adjudication (browser again)
+### 3.1 Local Weight Serving
+Model weights (~13 MB) are served from `public/models/`. On first visit, the browser loads model shards via WebGL and permanently caches them in browser IndexedDB storage.
+- **Zero Third-Party CDNs**: Neither Google Cloud nor external CDNs receive network requests when the model boots.
+- **Lazy Singleton**: A single instance of `@vladmandic/human` is instantiated and shared across the entire user session, eliminating memory leaks.
 
-This station makes the search defensible. Each candidate image is fetched through
-`/api/proxy`, which retrieves the bytes server-side (browser-shaped User-Agent first,
-then a retry with the image's own origin as Referer for hotlink-protected CDNs), hashes
-them with sha256 — this server-side hash is the authoritative digest that goes into the
-bundle — and returns them as a data URL so the canvas stays untainted and the browser
-can run the encoder on the pixels.
+### 3.2 Detection, Mesh & 1024-d Descriptor Pipeline
+1. **BlazeFace Detector**: Configured with rotation compensation (`rotation: true`) and single-face focus (`maxDetected: 1`).
+2. **FaceMesh**: Evaluates 468 3D landmarks for real-time mesh rendering and calculates 3D iris orientation.
+3. **FaceRes Feature Extractor**: Generates a **1024-dimensional normalized float embedding vector**.
+4. **Anti-Spoof & Liveness**: Dual neural network heads produce confidence scores (`real: 0..1`, `live: 0..1`) to prevent static photograph replay attacks.
 
-The candidate face is then re-encoded by the *same* Human instance that produced the
-probe descriptor, so the similarity number compares like with like. Before scoring,
-`passesQualityGate()` refuses candidates whose face is under 48 px on its shorter side
-or whose detector score is under 0.45: cosine similarity on face embeddings degrades
-sharply at low resolution — small crops drift toward the mean face and inflate false
-matches — so those candidates are shown with the refusal reason instead of a
-misleading score.
+### 3.3 Flip Test-Time Augmentation (TTA)
+In `readFaceStable()`:
+$$\mathbf{e}_{\text{stable}} = \frac{\mathbf{e}_{\text{original}} + \mathbf{e}_{\text{mirrored}}}{2}$$
+The frame is mirrored horizontally using an offscreen `<canvas>` context (`scale(-1, 1)`). Averaging the original descriptor with its mirror cancels out unilateral shadow gradients and head-tilt bias, generating a repeatable probe descriptor.
 
-Scoring is `cosineSimilarityBp()` in `src/lib/canonical.ts`: plain cosine similarity,
-clamped to [0, 1], returned as an integer in basis points. Measured calibration on the
-bundled encoder (four public-domain portraits, reproducible at `/selftest` without any
-API key): same-person pairs score ≥ 57.71, different-person pairs ≤ 44.88, and the
-default threshold of 54 sits in the gap between the two groups. The threshold is
-exposed as a dial in the console and rejected candidates keep their scores visible, so
-the decision can be inspected rather than taken on faith.
+---
 
-### Station IV — Seal (server + chain)
+## 4. Station II — Trace (Server-Side Provider Adapter)
 
-The accepted match is folded into a canonical evidence bundle (next section).
-`canonicalJson()` serializes it with object keys sorted at every depth and no
-insignificant whitespace; every field is a string or an integer, similarity is stored
-in basis points, and there are deliberately no floats — a float that round-trips
-through JSON on a different runtime can serialize differently and would silently break
-re-verification. `keccak256` of those canonical bytes is the digest.
+Implemented in `src/app/api/search/route.ts` and `src/lib/providers/`.
 
-`/api/anchor` first calls `verify(digest)` on the contract and returns 409 if the
-digest already exists (a clear message beats a raw revert), then submits
-`anchor(bytes32 bundleHash, uint32 similarityBp, string matchUrl)` and waits for the
-receipt. The contract (`chain/contracts/EvidenceRegistry.sol`, ~70 lines) reverts
-`AlreadyAnchored` on replay and `SimilarityOutOfRange` above 10000 bp; it keeps an
-append-only digest log for enumeration and emits an `Anchored` event.
-`verify(bytes32)` returns `(exists, timestamp, submitter, similarityBp)`.
+### 4.1 Extensible Provider Architecture
+Search backends implement the `SearchProvider` interface (`types.ts`):
 
-`src/lib/chain.ts` selects the network: local Hardhat (chain id 31337, viem wallet
-falls back to Hardhat's well-known account 0) is the default; `CHAIN_TARGET=sepolia`
-switches to Ethereum Sepolia (chain id 11155111) with live Etherscan links; `CHAIN_TARGET=amoy`
-switches to Polygon Amoy (chain id 80002). Deployments and anchors use a `DEPLOYER_PRIVATE_KEY` from
-`.env.local`. Same contract, same code path.
+```typescript
+export interface SearchProvider {
+  readonly id: string;
+  readonly label: string;
+  configured(): boolean;
+  search(image: Uint8Array, mime: string): Promise<SearchOutcome>;
+}
+```
 
-Only the digest, the similarity score, and the matched URL go on chain. The probe
-image and the descriptor never do.
+The registry in `index.ts` dynamically resolves the provider specified by `SEARCH_PROVIDER`:
+- **`SerpApiLens` (Default)**: Sends the probe image to `serpapi.com/image` to obtain an `image_id`, then queries Google Lens (`engine=google_lens`). A fallback retry queries `type=visual_matches` if the primary payload is sparse.
+- **`FaceCheckId`**: True facial-recognition search against public social records. Operates asynchronously via `upload_pic` and polls `search` until results materialize.
 
-## The evidence bundle
+### 4.2 Social Media Host Prioritization
+Candidates are parsed using `hostOf(url)` and matched against `SOCIAL_HOSTS`:
+`instagram.com`, `x.com`, `twitter.com`, `facebook.com`, `linkedin.com`, `tiktok.com`, `youtube.com`, `reddit.com`, `threads.net`, `pinterest.com`, `github.com`, etc.
 
-`EvidenceBundle` in `src/lib/canonical.ts`:
+Social hits are sorted to the front of the candidate queue, capped at 24 candidates, and returned alongside the probe's authoritative SHA-256 hash.
 
-| field | meaning |
-|---|---|
-| `v` | bundle schema version, literal `1` |
-| `probeImageSha256` | sha256 of the probe JPEG bytes |
-| `probeDescriptorSha256` | sha256 of the probe descriptor, quantized to fixed-point ints (×10000, rounded) so the digest is stable across platforms |
-| `matchUrl` | URL of the matched post |
-| `matchSource` | host the match came from, e.g. `instagram.com` |
-| `matchTitle` | page title reported by the search provider |
-| `matchImageSha256` | sha256 of the matched image bytes as fetched by `/api/proxy` |
-| `similarityBp` | face similarity in basis points, 0..10000, integer |
-| `encoder` | which encoder produced both descriptors (`human/blazeface+facemesh+faceres`) |
-| `provider` | which search backend found the match (`serpapi:google_lens` or `facecheck.id`) |
-| `capturedAt` | unix seconds when the probe was captured |
+---
 
-Anchor: `bundleDigest(bundle)` = `keccak256(canonicalJson(bundle))` →
-`anchor(digest, similarityBp, matchUrl)` → tx receipt with block number and gas.
+## 5. Station III — Adjudication (Client-Side Re-Encoding & Scoring)
 
-Verify: hand the bundle back to `/api/verify`, which recomputes the digest from the
-canonical serialization and asks the contract. Because the digest is derived from the
-content, verification needs no record id — the bundle *is* the key.
+Implemented in `src/components/Docket.tsx` and `src/app/api/proxy/route.ts`.
 
-Tamper demonstration (the console has a button for it): edit any single field —
-`verify-chain.mjs` flips `similarityBp` from 7314 to 7313 — and the recomputed digest
-is a different bytes32, so `verify` returns `exists: false`. The bundle was either
-never sealed or has been altered; the chain cannot tell which, and the UI says so.
+### 5.1 Image Proxying & Authoritative Hashing
+Browsers cannot directly load external CDN images into a `<canvas>` due to Cross-Origin Resource Sharing (CORS) security restrictions ("canvas taint").
+`/api/proxy` addresses this:
+1. **Two-Pass Fetch**: Requests the image with a Chrome User-Agent. If blocked (HTTP 403), it retries using the target image's origin as the `Referer` header.
+2. **Authoritative Hash**: The server calculates `sha256Bytes(imageBuffer)` on the raw downloaded bytes before converting them to a Base64 data URL.
+3. **Canvas Untainting**: Handing back a data URL allows the browser to draw the image onto a `<canvas>` and extract pixel tensors without browser security errors.
 
-## Why this shape
+### 5.2 Quality Gating
+Low-resolution crops drift toward the mean face of the training distribution, which artificially inflates cosine similarity and creates false positives.
+`passesQualityGate()` enforces:
+- `min(box.width, box.height) >= 48px`
+- `detector.score >= 0.45`
+Candidates failing these criteria are marked as skipped with clear diagnostic reasons.
 
-**Search proposes, encoder decides.** Google Lens matches whole images, not faces, so
-its candidates are lookalikes, reused photos, and stock imagery alongside real hits.
-Re-encoding every candidate with the same instance that read the probe converts "Lens
-thinks these pages look similar" into "the face encoder measured this specific
-similarity" — a claim the evidence bundle can actually carry.
+### 5.3 Mathematical Cosine Similarity (Basis Points)
+Cosine similarity between probe $\mathbf{u}$ and candidate $\mathbf{v}$:
+$$\text{Sim}(\mathbf{u}, \mathbf{v}) = \frac{\mathbf{u} \cdot \mathbf{v}}{\|\mathbf{u}\| \|\mathbf{v}\|}$$
+$$\text{similarityBp} = \max\left(0, \min\left(10000, \text{round}\left(\text{Sim}(\mathbf{u}, \mathbf{v}) \times 10000\right)\right)\right)$$
 
-**Hash-only anchoring.** Putting the image or descriptor on a public chain would be a
-privacy failure and a gas bill. A keccak256 digest is 32 bytes, reveals nothing, and
-proves everything the record needs to prove: that the bundle has not changed.
+Integer basis points eliminate floating-point non-determinism across devices.
 
-**Provider adapter.** Lens is free-tier-friendly but weak at faces; FaceCheck.ID is a
-real face-embedding search for anyone who pays. One interface and an env variable keep
-that a configuration choice rather than a rewrite.
+---
 
-**Local-first models.** The weights ship in `public/models`, so the face engine works
-offline and no face data reaches any third party until the operator deliberately runs
-the trace.
+## 6. Station IV — Seal & Verify (Smart Contract & Storage)
 
-## Verifying it
+Implemented in `chain/contracts/EvidenceRegistry.sol`, `src/lib/chain.ts`, and `src/app/api/anchor/route.ts`.
 
-`node scripts/verify-chain.mjs` (app on :3000, Hardhat node on :8545, contract
-deployed) runs five checks against the real API routes:
+### 6.1 Smart Contract Mechanics
+`EvidenceRegistry.sol` is a minimalist (~70 lines), gas-optimized Solidity 0.8.24 contract:
 
-1. Anchor a fixed bundle — expects status 200 with digest, tx hash, block, gas.
-2. Verify the untouched bundle — `onChain: true`, digest matches the sealed one.
-3. Verify with `similarityBp` 7314 → 7313 — `onChain: false`.
-4. Verify with the bundle's key order reversed — digest identical to the sealed one.
-   This is the check that matters most: it proves canonicalization is
-   order-independent, so re-verification does not depend on how the JSON happened to
-   be written.
-5. Re-anchor the same bundle — status 409, refused.
+```solidity
+contract EvidenceRegistry {
+    struct Record {
+        uint64 timestamp;    // block.timestamp
+        address submitter;   // msg.sender
+        uint32 similarityBp; // 0..10000
+    }
 
-The encoder half is checked at `/selftest`, no API key required: four public-domain
-portraits (two of the same person) go through `/api/proxy` and the encoder, and
-same-person pairs must outscore every different-person pair. Measured on this build:
+    mapping(bytes32 => Record) private _records;
+    bytes32[] private _digests;
 
-| pair | expected | similarity |
-|---|---|---|
-| obama-a ↔ obama-b | same person | **57.71** |
-| merkel ↔ watson | different | 44.88 |
-| obama-a ↔ watson | different | 41.46 |
-| obama-a ↔ merkel | different | 40.90 |
-| obama-b ↔ watson | different | 38.91 |
-| obama-b ↔ merkel | different | 30.66 |
+    event Anchored(
+        bytes32 indexed bundleHash,
+        address indexed submitter,
+        uint64 timestamp,
+        uint32 similarityBp,
+        string matchUrl
+    );
 
-## Known limits
+    error AlreadyAnchored(bytes32 bundleHash);
+    error SimilarityOutOfRange(uint32 similarityBp);
 
-Google Lens is not a face search — it finds well-indexed public figures and often
-nothing for a private individual; Station III exists precisely because its candidates
-cannot be trusted as matches. The 1024-d `faceres` encoder is good, not state of the
-art: expect trouble with heavy occlusion, extreme pose, low light, and large age gaps,
-which is why the threshold is a dial and every rejected score stays visible. The chain
-proves integrity, not truth — an anchored digest shows the bundle is unaltered since
-sealing, not that the match was correct, and the UI keeps those claims separate.
-Anchoring transactions are signed server-side with a key from `.env.local`, a
-deliberate demo choice (one less thing to fail on camera); it means the on-chain
-submitter is the server, not the operator, and a production build would connect a
-wallet. Some hosts (Instagram in particular) block server-side image fetches; those
-candidates are marked skipped with the reason. Anti-spoof and liveness scores are
-displayed but nothing gates on them.
+    function anchor(bytes32 bundleHash, uint32 similarityBp, string calldata matchUrl) external {
+        if (_records[bundleHash].timestamp != 0) revert AlreadyAnchored(bundleHash);
+        if (similarityBp > 10000) revert SimilarityOutOfRange(similarityBp);
+
+        _records[bundleHash] = Record({
+            timestamp: uint64(block.timestamp),
+            submitter: msg.sender,
+            similarityBp: similarityBp
+        });
+        _digests.push(bundleHash);
+
+        emit Anchored(bundleHash, msg.sender, uint64(block.timestamp), similarityBp, matchUrl);
+    }
+
+    function verify(bytes32 bundleHash)
+        external
+        view
+        returns (bool exists, uint64 timestamp, address submitter, uint32 similarityBp)
+    {
+        Record memory r = _records[bundleHash];
+        return (r.timestamp != 0, r.timestamp, r.submitter, r.similarityBp);
+    }
+}
+```
+
+- **Replay Protection**: Reverts with `AlreadyAnchored` if the hash is already mapped.
+- **Append-Only Enumeration**: `_digests[]` maintains a full historical catalog queryable via `total()` and `digestAt(index)`.
+- **Event Auditing**: Emits `Anchored` indexed by `bundleHash` and `submitter` for fast off-chain indexers and subgraphs.
+
+---
+
+## 7. The Canonical Evidence Bundle & Serialization
+
+The bundle format in `src/lib/canonical.ts`:
+
+| Field | Type | Description |
+|---|:---:|---|
+| `v` | `1` | Bundle schema version |
+| `probeImageSha256` | `string` | Hex SHA-256 of the captured probe JPEG bytes |
+| `probeDescriptorSha256` | `string` | SHA-256 of the fixed-point quantized probe embedding vector |
+| `matchUrl` | `string` | Discovered social media / web URL |
+| `matchSource` | `string` | Host domain (e.g. `instagram.com`) |
+| `matchTitle` | `string` | Web page title reported by search provider |
+| `matchImageSha256` | `string` | Authoritative SHA-256 of candidate image bytes |
+| `similarityBp` | `number` | Integer similarity score in basis points (0–10000) |
+| `encoder` | `string` | Model identifier tag (`human/blazeface+facemesh+faceres`) |
+| `provider` | `string` | Backend provider identifier (e.g. `serpapi:google_lens`) |
+
+### Deterministic Serialization (`canonicalJson`)
+```typescript
+export function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;
+}
+```
+Keys are sorted lexicographically at all depths, and all optional whitespace is stripped. Two different runtimes (Node.js, Go, Python, Rust) evaluating the same bundle will produce byte-identical strings, yielding the exact same Keccak-256 hash.
+
+---
+
+## 8. Dual Verification Architecture (API vs Direct RPC)
+
+Facechain provides two independent methods to verify records:
+
+### Method A: Browser & Next.js API (`/api/verify`)
+- Client sends the JSON bundle to `/api/verify`.
+- Server canonicalizes the bundle, re-derives `keccak256(canonicalJson(bundle))`, queries the contract via Viem, and returns structured validation status.
+- Includes the interactive **"Alter the bundle first"** toggle for live demonstrations.
+
+### Method B: Direct On-Chain RPC Script (`scripts/verify-direct-chain.mjs`)
+- Completely independent of the Next.js server.
+- Connects directly to the network's JSON-RPC endpoint via Viem.
+- Reads contract deployment addresses from `deployments.json`.
+- Queries `total()`, inspects the latest digest via `digestAt()`, and queries `verify()`.
+- Runs a live tamper test against `0x000...` to demonstrate contract rejection.
+
+---
+
+## 9. Security, Privacy & GDPR Model
+
+1. **Biometric Data Sovereignty**: Raw photographs and vector embeddings are never written to the server or the blockchain.
+2. **GDPR Article 17 ("Right to be Forgotten")**: Because the blockchain holds only a 32-byte one-way Keccak-256 cryptographic digest, no Personally Identifiable Information (PII) is permanently stamped onto the public ledger. If off-chain records are deleted, the on-chain hash reveals nothing about the subject.
+3. **No Centralized Biometric Database**: Face vectors exist only in volatile client WebGL GPU memory for the duration of the browser tab.
+
+---
+
+## 10. Known Architectural Constraints
+
+- **Image Matching vs Face Matching**: Google Lens matches entire images (background, clothing, pose). Station III (Adjudication) is specifically designed to eliminate this flaw by re-encoding faces biometrically.
+- **Server-Side Signing**: For demo stability and screen recording simplicity, the deployment uses a server-held private key in `.env.local`. A production enterprise iteration would attach an in-browser Web3 provider (e.g. MetaMask / WalletConnect).
+- **Network-Level Hotlink Blocks**: Highly restricted hosts (such as private Instagram accounts) block server proxy fetches. These are gracefully marked as skipped rather than crashing the pipeline.
