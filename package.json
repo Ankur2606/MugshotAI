@@ -10,9 +10,12 @@
     "chain:compile": "npm --prefix chain run compile",
     "chain:node": "npm --prefix chain run node",
     "chain:deploy": "npm --prefix chain run deploy",
+    "chain:deploy:sepolia": "npm --prefix chain run deploy:sepolia",
     "chain:deploy:amoy": "npm --prefix chain run deploy:amoy",
+    "chain:test": "npm --prefix chain test",
     "typecheck": "tsc --noEmit",
-    "verify:chain": "node scripts/verify-chain.mjs"
+    "verify:chain": "node scripts/verify-chain.mjs",
+    "verify:direct": "node scripts/verify-direct-chain.mjs"
   },
   "dependencies": {
     "@vladmandic/human": "^3.3.6",

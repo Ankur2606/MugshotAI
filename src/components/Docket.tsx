@@ -551,7 +551,11 @@ export function Docket() {
                   rel="noreferrer noopener"
                   className="block border-t border-rule px-5 py-3 font-mono text-[11px] uppercase tracking-widest text-amber hover:bg-amber hover:text-ink"
                 >
-                  Open on Polygonscan ↗
+                  {seal.network.includes("Sepolia")
+                    ? "Open on Etherscan (Sepolia) ↗"
+                    : seal.network.includes("Amoy")
+                      ? "Open on Polygonscan (Amoy) ↗"
+                      : "Open in block explorer ↗"}
                 </a>
               )}
             </motion.div>
