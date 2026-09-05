@@ -17,6 +17,10 @@ chain/artifacts
 chain/node_modules
 
 
+# test output
+test-results/
+playwright-report/
+
 # next.js auto-generated agent rule files
 AGENTS.md
 CLAUDE.md
