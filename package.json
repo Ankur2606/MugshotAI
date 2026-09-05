@@ -15,7 +15,8 @@
     "chain:test": "npm --prefix chain test",
     "typecheck": "tsc --noEmit",
     "verify:chain": "node scripts/verify-chain.mjs",
-    "verify:direct": "node scripts/verify-direct-chain.mjs"
+    "verify:direct": "node scripts/verify-direct-chain.mjs",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@vladmandic/human": "^3.3.6",
@@ -28,6 +29,7 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
