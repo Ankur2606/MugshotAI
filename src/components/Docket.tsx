@@ -12,6 +12,7 @@ import { HashStrip } from "./HashStrip";
 import { CalibrationScale } from "./CalibrationScale";
 import { Station } from "./Station";
 import { CandidateCarousel } from "./CandidateCarousel";
+import { CyberIntelFootprint } from "./CyberIntelFootprint";
 import {
   ENCODER_ID,
   imageFromDataUrl,
@@ -599,51 +600,56 @@ export function Docket() {
           )}
 
           {bundle && best && (
-            <div className="grid w-full min-w-0 max-w-full gap-8 lg:grid-cols-[minmax(0,1fr)_380px]">
-              <div>
-                <span className="eyebrow">match of record</span>
-                <a
-                  href={best.url}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  className="mt-2 block font-display text-[26px] leading-tight text-bone underline decoration-amber decoration-1 underline-offset-[6px] hover:text-amber"
-                >
-                  {best.title}
-                </a>
-                <p className="datum mt-2">{best.url}</p>
+            <>
+              <div className="grid w-full min-w-0 max-w-full gap-8 lg:grid-cols-[minmax(0,1fr)_380px]">
+                <div>
+                  <span className="eyebrow">match of record</span>
+                  <a
+                    href={best.url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="mt-2 block font-display text-[26px] leading-tight text-bone underline decoration-amber decoration-1 underline-offset-[6px] hover:text-amber"
+                  >
+                    {best.title}
+                  </a>
+                  <p className="datum mt-2">{best.url}</p>
 
-                <dl className="mt-6 grid grid-cols-2 gap-x-8 gap-y-4 sm:grid-cols-3">
-                  <Fact label="similarity" value={((best.similarityBp as number) / 100).toFixed(2)} accent />
-                  <Fact label="source" value={best.source} />
-                  <Fact label="encoder" value="faceres 1024-d" />
-                  <Fact label="found by" value={traceMeta?.providerLabel ?? "—"} />
-                  <Fact label="candidates scored" value={String(scored.length)} />
-                  <Fact
-                    label="rejected"
-                    value={String(scored.filter((s) => (s.similarityBp as number) < thresholdBp).length)}
-                  />
-                </dl>
+                  <dl className="mt-6 grid grid-cols-2 gap-x-8 gap-y-4 sm:grid-cols-3">
+                    <Fact label="similarity" value={((best.similarityBp as number) / 100).toFixed(2)} accent />
+                    <Fact label="source" value={best.source} />
+                    <Fact label="encoder" value="faceres 1024-d" />
+                    <Fact label="found by" value={traceMeta?.providerLabel ?? "—"} />
+                    <Fact label="candidates scored" value={String(scored.length)} />
+                    <Fact
+                      label="rejected"
+                      value={String(scored.filter((s) => (s.similarityBp as number) < thresholdBp).length)}
+                    />
+                  </dl>
 
-                <Disclosure label="canonical bundle — the exact bytes that get hashed">
-                  <pre className="hash mt-3 max-h-56 overflow-auto whitespace-pre-wrap border border-rule bg-bench p-4 text-dim">
-                    {canonicalJson(bundle)}
-                  </pre>
-                </Disclosure>
+                  <Disclosure label="canonical bundle — the exact bytes that get hashed">
+                    <pre className="hash mt-3 max-h-56 overflow-auto whitespace-pre-wrap border border-rule bg-bench p-4 text-dim">
+                      {canonicalJson(bundle)}
+                    </pre>
+                  </Disclosure>
+                </div>
+
+                <div className="self-start border border-rule bg-bench p-5">
+                  {best.thumb && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={best.thumb}
+                      alt=""
+                      className="mb-4 aspect-square w-full border border-rule object-cover"
+                    />
+                  )}
+                  <HashStrip digest={digest} label="bundle digest · keccak256" />
+                  <BundleMetadataInspector bundle={bundle} />
+                </div>
               </div>
 
-              <div className="self-start border border-rule bg-bench p-5">
-                {best.thumb && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={best.thumb}
-                    alt=""
-                    className="mb-4 aspect-square w-full border border-rule object-cover"
-                  />
-                )}
-                <HashStrip digest={digest} label="bundle digest · keccak256" />
-                <BundleMetadataInspector bundle={bundle} />
-              </div>
-            </div>
+              {/* Cyber Intelligence Outbound Footprint Radar */}
+              <CyberIntelFootprint targetUrl={best.url} />
+            </>
           )}
 
           {/* Discovered Evidence 3D Carousel */}
