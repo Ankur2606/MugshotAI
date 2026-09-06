@@ -79,32 +79,54 @@ export function CyberIntelFootprint({ primaryUrl, targets = [] }: Props) {
     return Array.from(map.values());
   }, [reports]);
 
-  // Distinct category filters (e.g. "Scene Context", "Person 1", etc.)
+  // Distinct category filters (e.g. "Scene Context", "Person 1", "Person 2", "Person 3")
   const availableCategories = useMemo(() => {
     const cats = new Set<string>();
+    for (const t of targets) {
+      if (t.label) cats.add(t.label);
+    }
     for (const p of allProfiles) {
       if (p.categoryLabel) cats.add(p.categoryLabel);
     }
-    return Array.from(cats);
-  }, [allProfiles]);
+    return Array.from(cats).sort((a, b) => {
+      if (a === "Scene Context") return -1;
+      if (b === "Scene Context") return 1;
+      const numA = Number(a.match(/\d+/)?.[0] ?? 999);
+      const numB = Number(b.match(/\d+/)?.[0] ?? 999);
+      return numA - numB || a.localeCompare(b);
+    });
+  }, [targets, allProfiles]);
 
   const filteredProfiles = useMemo(() => {
     if (activeCategoryFilter === "all") return allProfiles;
     return allProfiles.filter((p) => p.categoryLabel === activeCategoryFilter);
   }, [allProfiles, activeCategoryFilter]);
 
-  // Separate authors, commenters/tagged, and outbound profiles for clear visual hierarchy
-  const authors = filteredProfiles.filter((p) => p.source === "author");
+  // Separate authors/target subjects, commenters/tagged, video sources, and outbound profiles
+  const subjectsAndAuthors = filteredProfiles.filter(
+    (p) => (p.source === "author" || p.source === "subject") && !(p.platform === "youtube" && p.source === "subject")
+  );
+  const videoSources = filteredProfiles.filter(
+    (p) => p.platform === "youtube" && p.source === "subject"
+  );
   const commenters = filteredProfiles.filter((p) => p.source === "commenter");
-  const outbounds = filteredProfiles.filter((p) => p.source === "page" || p.source === "bio-hub");
+  const outbounds = filteredProfiles.filter(
+    (p) => (p.source === "page" || p.source === "bio-hub") && p.platform !== "youtube"
+  );
 
   const bioHubsFound = useMemo(() => {
     return Array.from(new Set(reports.map((r) => r.hubFound).filter(Boolean))) as string[];
   }, [reports]);
 
   const platformStyle = (platform: DiscoveredProfile["platform"], source: DiscoveredProfile["source"]) => {
+    if (platform === "youtube" && source === "subject") {
+      return "border-rose-500/80 bg-rose-950/30 text-rose-300 ring-1 ring-rose-500/30";
+    }
     if (source === "author") {
       return "border-amber/80 bg-amber/15 text-amber ring-1 ring-amber/40";
+    }
+    if (source === "subject") {
+      return "border-amber-400/70 bg-amber-950/20 text-amber-200 ring-1 ring-amber-400/30";
     }
     if (source === "commenter") {
       return "border-emerald-500/60 bg-emerald-950/30 text-emerald-400";
@@ -246,26 +268,45 @@ export function CyberIntelFootprint({ primaryUrl, targets = [] }: Props) {
           </div>
         ) : filteredProfiles.length > 0 ? (
           <>
-            {/* 1. Post Authors Section (e.g. Art Commisso / Chirag Bachwani) */}
-            {authors.length > 0 && (
+            {/* 1. Target Subjects & Post Authors Section (e.g. Henry Knight / Art Commisso / Jason H) */}
+            {subjectsAndAuthors.length > 0 && (
               <div>
                 <div className="mb-2 flex items-center gap-2">
                   <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-amber border border-amber/40 bg-amber/10 px-1.5 py-0.5">
-                    Post Author / Publisher
+                    Target Subject / Post Author ({subjectsAndAuthors.length})
                   </span>
                   <span className="font-mono text-[10px] text-dim">
-                    Resolved directly from permalink & publisher actor
+                    Resolved directly from permalink, publisher & target profile leads
                   </span>
                 </div>
                 <div className="grid gap-2.5 sm:grid-cols-2 md:grid-cols-3">
-                  {authors.map((p, idx) => (
-                    <ProfileCard key={`author-${p.url}-${idx}`} profile={p} styleClass={platformStyle(p.platform, p.source)} />
+                  {subjectsAndAuthors.map((p, idx) => (
+                    <ProfileCard key={`subject-${p.url}-${idx}`} profile={p} styleClass={platformStyle(p.platform, p.source)} />
                   ))}
                 </div>
               </div>
             )}
 
-            {/* 2. Commenters & Tagged Subjects Section (e.g. Bhavya Pratap Singh Tomar) */}
+            {/* 2. Verified Video Sources & Media (e.g. YouTube Video: watch?v=4AKtwrmV37I) */}
+            {videoSources.length > 0 && (
+              <div>
+                <div className="mb-2 flex items-center gap-2">
+                  <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-rose-400 border border-rose-500/40 bg-rose-950/30 px-1.5 py-0.5">
+                    Video Evidence & Media Sources ({videoSources.length})
+                  </span>
+                  <span className="font-mono text-[10px] text-dim">
+                    Direct video permalinks resolved from media candidates
+                  </span>
+                </div>
+                <div className="grid gap-2.5 sm:grid-cols-2 md:grid-cols-3">
+                  {videoSources.map((p, idx) => (
+                    <ProfileCard key={`video-${p.url}-${idx}`} profile={p} styleClass={platformStyle(p.platform, p.source)} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 3. Commenters & Tagged Subjects Section (e.g. Bhavya Pratap Singh Tomar) */}
             {commenters.length > 0 && (
               <div>
                 <div className="mb-2 flex items-center gap-2">
@@ -284,7 +325,7 @@ export function CyberIntelFootprint({ primaryUrl, targets = [] }: Props) {
               </div>
             )}
 
-            {/* 3. Outbound Profiles & Link-in-Bio Claims Section */}
+            {/* 4. Outbound Profiles & Link-in-Bio Claims Section */}
             {outbounds.length > 0 && (
               <div>
                 <div className="mb-2 flex items-center gap-2">
