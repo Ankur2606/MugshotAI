@@ -182,48 +182,27 @@ The registry in `index.ts` dynamically resolves the provider specified by `SEARC
   - Returns `probeCategory: "face_0"`, `"face_1"`, `"face_2"` etc.
 - Operator sees filter tabs: `Person 1 | Person 2 | Person 3`
 
-**Path C — Sherlock OSINT (Priority 3)**
-- Extracts `@username` handles from visual result URLs and page titles
-- Runs pure TypeScript Sherlock engine (414 platforms, `sherlock-sites.json`)
-- Hard 12-second budget via `Promise.race([sherlockWork, 12s_timeout])`
-- Avatar mapping: GitHub Avatars API, unavatar.io for social platforms
-- Returns `probeCategory: "osint"`
+**E-Commerce & Apparel Noise Filtering**
+- Proactively suppresses shopping / apparel catalogue results (Zara, ASOS, H&M, SHEIN, `/products/`, `/shop/`) that visual search engines typically return when focusing on clothing.
+- Applied strictly to generic websites; social platform profiles and posts are always preserved.
 
-**E-Commerce Filter**
-- Removes clothing/product pages (Zara, ASOS, H&M, SHEIN, `/products/`, `/shop/`)
-- Applied to all paths except social platform hosts
-
-**Assembly Order**
+**Assembly Order & Fair Group Representation**
 ```
-Scene[:12] → Person 1[:4] → Person 2[:4] → Person 3[:4] → OSINT[:4] → fill remaining
+Scene[:16] → Person 1[:5] → Person 2[:5] → Person 3[:5] → fill remaining slots
 ```
-Total cap: 28 candidates returned to client.
+Total cap: 28 high-priority candidates dispatched to the client adjudication pool.
 
-### 4.3 TypeScript Sherlock Engine
-
-`src/lib/sherlock-engine.ts` — a faithful port of `sherlock-project/sherlock`:
-
-- Reads `src/lib/sherlock-sites.json` (414 site definitions, same file as the Python package)
-- Implements all three Sherlock detection modes:
-  - `status_code`: found if HTTP response is 2xx
-  - `message`: found if response body does NOT contain `errorMsg`
-  - `response_url`: found if redirect destination is not `errorUrl`
-- Runs in batches of 40 concurrent `fetch()` calls, 4s timeout per site
-- Priority-first: social/profile platforms probed before niche sites
-- NSFW sites skipped by default
-- **Vercel-compatible**: zero Python, zero child processes, pure Web Fetch API
-
-### 4.4 Social Media Host Prioritization
-Candidates are parsed using `hostOf(url)` and matched against `SOCIAL_HOSTS`:
+### 4.3 Social Media Host Prioritization
+Candidates are parsed using `hostOf(url)` and matched against verified social networks:
 `instagram.com`, `x.com`, `twitter.com`, `facebook.com`, `linkedin.com`, `tiktok.com`, `youtube.com`, `reddit.com`, `threads.net`, `pinterest.com`, `github.com`, etc.
 
-Social hits are sorted to the front of each bucket. Total candidate cap: 28.
+Social hits are prioritized to the front of each candidate bucket before scoring.
 
 ---
 
-## 5. Station III — Adjudication (Client-Side Re-Encoding & Scoring)
+## 5. Station III — Adjudication & Cyber Intelligence (Client-Side Re-Encoding & Scoring)
 
-Implemented in `src/components/Docket.tsx` and `src/app/api/proxy/route.ts`.
+Implemented in `src/components/Docket.tsx`, `src/app/api/proxy/route.ts`, and `src/components/CyberIntelFootprint.tsx`.
 
 ### 5.1 Image Proxying & Authoritative Hashing
 Browsers cannot directly load external CDN images into a `<canvas>` due to Cross-Origin Resource Sharing (CORS) security restrictions ("canvas taint").
@@ -245,6 +224,20 @@ $$\text{Sim}(\mathbf{u}, \mathbf{v}) = \frac{\mathbf{u} \cdot \mathbf{v}}{\|\mat
 $$\text{similarityBp} = \max\left(0, \min\left(10000, \text{round}\left(\text{Sim}(\mathbf{u}, \mathbf{v}) \times 10000\right)\right)\right)$$
 
 Integer basis points eliminate floating-point non-determinism across devices.
+
+### 5.4 Discovered Evidence 3D Carousel
+An interactive horizontal carousel (`src/components/CandidateCarousel.tsx`) displays all adjudicated matches:
+- **Fair Multi-Person Interleaving**: When viewing "All" candidates, the carousel algorithm ranks the #1 match of Scene Context, Person 1, Person 2, and Person 3 consecutively before displaying secondary results, guaranteeing balanced representation in group photos.
+- **Visual Confidence Tiers**: Color-coded borders indicate whether candidate similarity surpasses the configured operator threshold dial (`thresholdBp`).
+
+### 5.5 Cyber Intelligence // Deep Identity & 1-Hop Bio-Hub Radar
+Implemented in `src/components/CyberIntelFootprint.tsx`, `src/app/api/intel/route.ts`, and `src/lib/page-crawler.ts`:
+- **Dual-Algorithm Identity Extraction**:
+  - *Algo 1 (Social Posts)*: Parses post permalinks to identify the publisher (`/posts/{author-slug}_...`), normalizes subdomains (`ca.linkedin.com` $\rightarrow$ canonical `www.linkedin.com`), and scans DOM/hydration data for commenters and tagged subjects (`bhavya-pratap-singh-tomar`, `jason-costa-6bab0590`, `natasha-giuffre`).
+  - *Algo 2 (Direct Profiles & Media)*: Directly resolves profile subjects (`Henry Knight`, `Jason Costa`) and clean video sources. Queries YouTube oEmbed to resolve video titles and official creator channels (`@USCMooreSchool`), while suppressing internal asset traffic (`/s/...`, `/opensearch`, `/ads`).
+- **Recursive 1-Hop Bio-Hub Traversal**: Automatically follows Linktree, Beacons, Bento, and Devfolio links 1 hop deep, parsing underlying portfolios to build a unified cross-platform identity map.
+- **Group Photo Multi-Person Sweeping**: Automatically queries the top candidate for every detected person category in parallel, providing tabbed views for `Scene Context`, `Person 1`, `Person 2`, and `Person 3`.
+- **Strict Cryptographic Perimeter**: Intelligence leads remain strictly off-chain as UI telemetry; the immutable on-chain evidence bundle and Keccak-256 seal remain solely derived from the verified face match.
 
 ---
 
