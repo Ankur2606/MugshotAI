@@ -6,15 +6,19 @@ import { ConsoleButton } from "./ConsoleButton";
 import {
   frameToJpeg,
   loadEngine,
+  readAllFaces,
   readFace,
   readFaceStable,
   type FaceReading,
 } from "@/lib/human-client";
+import { ImageCropper } from "./ImageCropper";
 
 export type Probe = {
   blob: Blob;
   previewUrl: string;
   reading: FaceReading;
+  allReadings?: FaceReading[];
+  selectedFaceIndex?: number | "all";
   capturedAt: number;
   origin: "camera" | "file";
 };
@@ -46,7 +50,35 @@ export function Specimen({
   const [live, setLive] = useState<FaceReading | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [flash, setFlash] = useState(false);
+  const [showCropper, setShowCropper] = useState(false);
   const reduced = useReducedMotion();
+
+  const handleApplyCrop = useCallback(
+    async (croppedBlob: Blob) => {
+      setShowCropper(false);
+      setNote(null);
+      const url = URL.createObjectURL(croppedBlob);
+      const img = new Image();
+      img.src = url;
+      await img.decode().catch(() => {});
+      const allReadings = await readAllFaces(img);
+      const reading = (await readFaceStable(img)) || allReadings[0];
+      if (!reading) {
+        setNote("No face detected in the cropped region. Try a broader crop.");
+        return;
+      }
+      onProbe({
+        blob: croppedBlob,
+        previewUrl: url,
+        reading,
+        allReadings: allReadings.length > 0 ? allReadings : [reading],
+        selectedFaceIndex: "all",
+        capturedAt: Math.floor(Date.now() / 1000),
+        origin: "file",
+      });
+    },
+    [onProbe],
+  );
 
   useEffect(() => {
     loadEngine(setEngine).catch((e) =>
@@ -145,6 +177,7 @@ export function Specimen({
       setNote("No face in that frame. Move into the light and try again.");
       return;
     }
+    const allReadings = await readAllFaces(video);
     // the shutter fires only once the frame is known good — a flash on a
     // failed capture would lie about what happened
     if (!reduced) setFlash(true);
@@ -153,6 +186,8 @@ export function Specimen({
       blob,
       previewUrl: URL.createObjectURL(blob),
       reading,
+      allReadings: allReadings.length > 0 ? allReadings : [reading],
+      selectedFaceIndex: "all",
       capturedAt: Math.floor(Date.now() / 1000),
       origin: "camera",
     });
@@ -168,7 +203,8 @@ export function Specimen({
       await img.decode().catch(() => {
         setNote("That file could not be read as an image.");
       });
-      const reading = await readFaceStable(img);
+      const allReadings = await readAllFaces(img);
+      const reading = (await readFaceStable(img)) || allReadings[0];
       if (!reading) {
         setNote("No face found in that image. Try a clearer, front-facing photo.");
         return;
@@ -178,6 +214,8 @@ export function Specimen({
         blob,
         previewUrl: URL.createObjectURL(blob),
         reading,
+        allReadings: allReadings.length > 0 ? allReadings : [reading],
+        selectedFaceIndex: "all",
         capturedAt: Math.floor(Date.now() / 1000),
         origin: "file",
       });
@@ -205,7 +243,7 @@ export function Specimen({
             <img
               src={probe.previewUrl}
               alt="Captured probe"
-              className="h-full w-full object-cover"
+              className="h-full w-full object-contain"
             />
           ) : (
             <>
@@ -281,6 +319,60 @@ export function Specimen({
           </AnimatePresence>
         </div>
 
+        {/* Multi-Face Indicator & Selector */}
+        {probe && probe.allReadings && probe.allReadings.length > 1 && (
+          <div className="mt-2.5 border border-rule bg-bench/60 p-2.5">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="font-mono text-[10px] uppercase tracking-wider text-amber font-semibold flex items-center gap-1.5">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber animate-pulse" />
+                {probe.allReadings.length} Faces Discovered
+              </span>
+              <span className="font-mono text-[9px] text-dim">
+                Select target or trace all
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  onProbe({
+                    ...probe,
+                    selectedFaceIndex: "all",
+                    reading: probe.allReadings![0],
+                  });
+                }}
+                className={`px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider border transition-colors ${
+                  probe.selectedFaceIndex === "all"
+                    ? "border-amber bg-amber/20 text-amber font-semibold"
+                    : "border-rule text-dim hover:text-bone"
+                }`}
+              >
+                ✦ All Faces + Scene (Dual-Path)
+              </button>
+              {probe.allReadings.map((r, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => {
+                    onProbe({
+                      ...probe,
+                      selectedFaceIndex: idx,
+                      reading: r,
+                    });
+                  }}
+                  className={`px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider border transition-colors ${
+                    probe.selectedFaceIndex === idx
+                      ? "border-verdict bg-verdict/20 text-verdict font-semibold"
+                      : "border-rule text-dim hover:text-bone"
+                  }`}
+                >
+                  Person {idx + 1} ({(r.score * 100).toFixed(0)}%)
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="mt-3 flex flex-wrap gap-2">
           {!probe && !cameraOn && (
             <ConsoleButton
@@ -318,9 +410,18 @@ export function Specimen({
             </ConsoleButton>
           )}
           {probe && (
-            <ConsoleButton variant="ghost" onClick={() => onProbe(null)} disabled={busy}>
-              Discard specimen
-            </ConsoleButton>
+            <>
+              <ConsoleButton
+                variant="quiet"
+                onClick={() => setShowCropper(true)}
+                disabled={busy}
+              >
+                Crop & Refine
+              </ConsoleButton>
+              <ConsoleButton variant="ghost" onClick={() => onProbe(null)} disabled={busy}>
+                Discard specimen
+              </ConsoleButton>
+            </>
           )}
           <input
             ref={fileRef}
@@ -334,6 +435,14 @@ export function Specimen({
             }}
           />
         </div>
+
+        {showCropper && probe && (
+          <ImageCropper
+            imageUrl={probe.previewUrl}
+            onApply={(blob) => void handleApplyCrop(blob)}
+            onCancel={() => setShowCropper(false)}
+          />
+        )}
       </div>
 
       {/* readout */}

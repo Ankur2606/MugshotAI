@@ -27,13 +27,13 @@ export function Station({
 }) {
   return (
     <section
-      className="grid grid-cols-[28px_1fr] gap-x-5 sm:grid-cols-[52px_1fr] sm:gap-x-8"
+      className="relative grid w-full min-w-0 max-w-full grid-cols-[40px_minmax(0,1fr)] gap-6 sm:grid-cols-[56px_minmax(0,1fr)] sm:gap-10"
       aria-current={active && !done ? "step" : undefined}
     >
-      {/* spine */}
-      <div className="relative flex flex-col items-center pt-9">
-        <motion.span
-          className="h-2 w-2 rounded-full"
+      {/* progress spine */}
+      <div className="flex flex-col items-center">
+        <motion.div
+          className="relative z-10 h-3 w-3 rounded-full border border-ink"
           initial={false}
           animate={{
             background: done
@@ -62,7 +62,7 @@ export function Station({
 
       {/* body */}
       <motion.div
-        className="border-b border-rule py-8 last:border-b-0 sm:py-10"
+        className="w-full min-w-0 max-w-full overflow-hidden border-b border-rule py-8 last:border-b-0 sm:py-10"
         initial={false}
         animate={{ opacity: active ? 1 : 0.42, y: active ? 0 : 4 }}
         transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
