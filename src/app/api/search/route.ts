@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { activeProvider } from "@/lib/providers";
 import { sha256Bytes } from "@/lib/canonical";
 
+import type { ProbeBox } from "@/lib/providers/types";
+
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
@@ -30,7 +32,7 @@ export async function POST(req: Request) {
 
   let bytes: Uint8Array;
   let mime: string;
-  let probes: Array<{ id: string; label: string; box?: [number, number, number, number] }> | undefined = undefined;
+  let probes: ProbeBox[] | undefined = undefined;
 
   try {
     const form = await req.formData();

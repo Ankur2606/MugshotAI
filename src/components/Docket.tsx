@@ -17,6 +17,8 @@ import {
   imageFromDataUrl,
   passesQualityGate,
   readFace,
+  scoreCandidateFace,
+  resetEngineToProbeConfig,
 } from "@/lib/human-client";
 import {
   bundleDigest,
@@ -200,6 +202,7 @@ export function Docket() {
     (p: Probe | null) => {
       abortRef.current = true;
       resetDownstream();
+      void resetEngineToProbeConfig();
       setProbe(p);
     },
     [resetDownstream],
@@ -227,7 +230,7 @@ export function Docket() {
 
         patch({ phase: "encoding", thumb: json.dataUrl, imageSha256: json.sha256 });
         const img = await imageFromDataUrl(json.dataUrl);
-        const reading = await readFace(img);
+        const reading = await scoreCandidateFace(img);
         if (!reading) {
           patch({ phase: "skipped", note: "no face detected on this page image" });
           return;
@@ -277,15 +280,16 @@ export function Docket() {
       const form = new FormData();
       form.append("image", probe.blob, "probe.jpg");
 
-      // Multi-probe definitions: include scene + each detected face
-      const probesList: Array<{ id: string; label: string; box?: [number, number, number, number]; boxRaw?: [number, number, number, number] }> = [];
+      // Multi-probe definitions: include scene + each detected face (top 4 to avoid excessive query fan-out)
+      const probesList: Array<{ id: string; label: string; box?: [number, number, number, number]; boxRaw?: [number, number, number, number]; isPrimary?: boolean }> = [];
       if (probe.selectedFaceIndex === "all" && probe.allReadings && probe.allReadings.length > 0) {
-        probe.allReadings.forEach((r, idx) => {
+        probe.allReadings.slice(0, 4).forEach((r, idx) => {
           probesList.push({
             id: `face_${idx}`,
             label: `Person ${idx + 1}`,
             box: r.box,
             boxRaw: r.boxRaw,
+            isPrimary: false,
           });
         });
       } else if (typeof probe.selectedFaceIndex === "number" && probe.allReadings?.[probe.selectedFaceIndex]) {
@@ -295,6 +299,7 @@ export function Docket() {
           label: `Person ${probe.selectedFaceIndex + 1}`,
           box: target.box,
           boxRaw: target.boxRaw,
+          isPrimary: true,
         });
       } else if (probe.reading?.box) {
         probesList.push({
@@ -302,6 +307,7 @@ export function Docket() {
           label: "Person 1",
           box: probe.reading.box,
           boxRaw: probe.reading.boxRaw,
+          isPrimary: true,
         });
       }
 
@@ -361,6 +367,7 @@ export function Docket() {
       setTraceError(e instanceof Error ? e.message : "The trace failed.");
     } finally {
       setTracing(false);
+      void resetEngineToProbeConfig();
     }
   }, [probe, resetDownstream, scoreOne]);
 
@@ -456,385 +463,386 @@ export function Docket() {
       <div className="relative z-10 mx-auto w-full min-w-0 max-w-[1180px] overflow-x-clip px-6 pb-32 sm:px-10">
         <Masthead status={status} />
 
-      <Station
-        index="I"
-        title="Specimen"
-        caption="A face is captured and reduced to a numeric descriptor. Nothing leaves the browser at this stage."
-        active
-        done={Boolean(probe)}
-      >
-        <Specimen onProbe={onProbe} probe={probe} busy={tracing} />
-      </Station>
+        <Station
+          index="I"
+          title="Specimen"
+          caption="A face is captured and reduced to a numeric descriptor. Nothing leaves the browser at this stage."
+          active
+          done={Boolean(probe)}
+        >
+          <Specimen onProbe={onProbe} probe={probe} busy={tracing} />
+        </Station>
 
-      <Station
-        index="II"
-        title="Trace"
-        caption={
-          traceMeta
-            ? `${traceMeta.providerLabel} returned ${traceMeta.totalFound} candidate pages in ${(traceMeta.elapsedMs / 1000).toFixed(1)}s. Each one is re-encoded here and scored against the specimen.`
-            : "The probe goes out to a live image-search backend. Every page it returns is treated as a lead, not a match."
-        }
-        active={Boolean(probe)}
-        done={scored.length > 0}
-      >
-        <div className="flex flex-wrap items-start justify-between gap-x-10 gap-y-6">
-          <div className="flex min-w-0 flex-wrap items-center gap-3">
-            <ConsoleButton
-              variant="primary"
-              filled={tracing}
-              onClick={() => void runTrace()}
-              disabled={!probe || tracing || !searchReady}
-              className="w-full sm:w-auto"
-            >
-              {tracing ? "Tracing…" : "Run trace"}
-            </ConsoleButton>
-            {!searchReady && (
-              <span className="datum text-reject">
-                No search backend configured — set SERPAPI_API_KEY in .env.local
-              </span>
-            )}
-            {candidates.length > 0 && (
-              <span className="datum tabular-nums">
-                {progress}/{candidates.length} examined · {scored.length} carried a face
-              </span>
-            )}
-          </div>
-
-          <ThresholdDial valueBp={thresholdBp} onChange={setThresholdBp} />
-        </div>
-
-        {traceError && (
-          <p className="mt-5 border-l-2 border-reject pl-3 text-[13px] text-bone">{traceError}</p>
-        )}
-
-        {/* Multi-Probe Facet Filter Tabs */}
-        {candidates.length > 0 && availableFacets.length > 1 && (
-          <div className="mt-6 flex flex-wrap items-center gap-1.5 border-b border-rule pb-3">
-            <span className="font-mono text-[10px] uppercase tracking-wider text-dim mr-1">
-              Filter Leads:
-            </span>
-            <button
-              type="button"
-              onClick={() => setActiveFacet("all")}
-              className={`px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider border transition-colors ${
-                activeFacet === "all"
-                  ? "border-amber bg-amber/20 text-amber font-semibold"
-                  : "border-rule text-dim hover:text-bone"
-              }`}
-            >
-              All Leads ({candidates.length})
-            </button>
-            {availableFacets.map((facet) => {
-              const count = candidates.filter((c) => (c.probeCategory || "scene") === facet).length;
-              const label =
-                facet === "scene"
-                  ? "Scene Context"
-                  : facet === "osint"
-                    ? "Sherlock OSINT"
-                    : facet.replace("face_", "Person ");
-              return (
-                <button
-                  key={facet}
-                  type="button"
-                  onClick={() => setActiveFacet(facet)}
-                  className={`px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider border transition-colors ${
-                    activeFacet === facet
-                      ? "border-verdict bg-verdict/20 text-verdict font-semibold"
-                      : "border-rule text-dim hover:text-bone"
-                  }`}
-                >
-                  {label} ({count})
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        {filteredCandidates.length > 0 && (
-          <ul className="mt-7 grid gap-px border border-rule bg-rule sm:grid-cols-2">
-            {filteredCandidates.map((c, i) => (
-              <CandidateRow
-                key={c.key}
-                c={c}
-                thresholdBp={thresholdBp}
-                isBest={best?.key === c.key}
-                index={i}
-              />
-            ))}
-          </ul>
-        )}
-      </Station>
-
-      <Station
-        index="III"
-        title="Adjudication"
-        caption="One candidate clears the threshold and becomes the record. The rest stay on the docket with their scores, so the decision is inspectable."
-        active={scored.length > 0}
-        done={Boolean(bundle)}
-      >
-        {!bundle && scored.length > 0 && (
-          <p className="max-w-xl text-[13px] leading-relaxed text-dim">
-            Nothing cleared {(thresholdBp / 100).toFixed(0)}. The highest score was{" "}
-            <span className="font-mono text-bone">
-              {scored.length
-                ? (Math.max(...scored.map((s) => s.similarityBp as number)) / 100).toFixed(2)
-                : "—"}
-            </span>
-            . Lower the threshold to inspect near misses, or re-capture the specimen.
-          </p>
-        )}
-        {!bundle && scored.length === 0 && (
-          <p className="text-[13px] text-dim">Run the trace to populate this station.</p>
-        )}
-
-        {bundle && best && (
-          <div className="grid w-full min-w-0 max-w-full gap-8 lg:grid-cols-[minmax(0,1fr)_380px]">
-            <div>
-              <span className="eyebrow">match of record</span>
-              <a
-                href={best.url}
-                target="_blank"
-                rel="noreferrer noopener"
-                className="mt-2 block font-display text-[26px] leading-tight text-bone underline decoration-amber decoration-1 underline-offset-[6px] hover:text-amber"
-              >
-                {best.title}
-              </a>
-              <p className="datum mt-2">{best.url}</p>
-
-              <dl className="mt-6 grid grid-cols-2 gap-x-8 gap-y-4 sm:grid-cols-3">
-                <Fact label="similarity" value={((best.similarityBp as number) / 100).toFixed(2)} accent />
-                <Fact label="source" value={best.source} />
-                <Fact label="encoder" value="faceres 1024-d" />
-                <Fact label="found by" value={traceMeta?.providerLabel ?? "—"} />
-                <Fact label="candidates scored" value={String(scored.length)} />
-                <Fact
-                  label="rejected"
-                  value={String(scored.filter((s) => (s.similarityBp as number) < thresholdBp).length)}
-                />
-              </dl>
-
-              <Disclosure label="canonical bundle — the exact bytes that get hashed">
-                <pre className="hash mt-3 max-h-56 overflow-auto whitespace-pre-wrap border border-rule bg-bench p-4 text-dim">
-                  {canonicalJson(bundle)}
-                </pre>
-              </Disclosure>
-            </div>
-
-            <div className="self-start border border-rule bg-bench p-5">
-              {best.thumb && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={best.thumb}
-                  alt=""
-                  className="mb-4 aspect-square w-full border border-rule object-cover"
-                />
-              )}
-              <HashStrip digest={digest} label="bundle digest · keccak256" />
-              <BundleMetadataInspector bundle={bundle} />
-            </div>
-          </div>
-        )}
-
-        {/* Discovered Evidence 3D Carousel */}
-        {scored.length > 0 && (
-          <CandidateCarousel
-            candidates={scored}
-            thresholdBp={thresholdBp}
-            selectedKey={best?.key ?? null}
-            onSelect={(key) => setSelectedCandidateKey(key)}
-          />
-        )}
-      </Station>
-
-      <Station
-        index="IV"
-        title="Seal"
-        caption="The digest goes on chain. The bundle itself does not — the chain only needs to prove the bundle has not changed since this moment."
-        active={Boolean(bundle)}
-        done={Boolean(seal)}
-        last
-      >
-        <div className="flex flex-wrap items-center gap-3">
-          <ConsoleButton
-            variant="primary"
-            filled={sealing || Boolean(seal)}
-            onClick={() => void runSeal()}
-            disabled={!bundle || sealing || !chainReady || Boolean(seal)}
-            className="w-full sm:w-auto"
-          >
-            {sealing ? "Writing…" : seal?.isExisting ? "Already Sealed" : seal ? "Sealed" : "Seal to chain"}
-          </ConsoleButton>
-          {!chainReady && (
-            <span className="datum text-reject">
-              {status?.chain.registry
-                ? `Chain unreachable at ${status.chain.label}`
-                : "No registry deployed — run npm run chain:node then npm run chain:deploy"}
-            </span>
-          )}
-        </div>
-
-        {sealError && (
-          <p
-            className={`mt-5 border-l-2 pl-3 text-[13px] text-bone ${
-              seal?.isExisting ? "border-amber" : "border-reject"
-            }`}
-          >
-            {seal?.isExisting && (
-              <span className="mr-2 font-mono text-[11px] font-semibold uppercase tracking-wider text-amber">
-                Notice:
-              </span>
-            )}
-            {sealError}
-          </p>
-        )}
-
-        <AnimatePresence>
-          {seal && (
-            <motion.div
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-              className="mt-7 border border-rule bg-bench"
-            >
-              <div className="flex items-center justify-between border-b border-rule px-5 py-3">
-                <span className="eyebrow flex items-center gap-2">
-                  {seal.isExisting ? "previously sealed on-chain record" : "on-chain receipt"}
-                  {seal.isExisting && (
-                    <span className="rounded border border-amber/30 bg-amber/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-amber">
-                      Pre-anchored
-                    </span>
-                  )}
-                </span>
-                <span className="font-mono text-[11px] text-verdict">
-                  {seal.network} · chain {seal.chainId}
-                </span>
-              </div>
-              <dl className="grid gap-x-8 gap-y-4 p-5 sm:grid-cols-2">
-                <Fact label="digest (sealed id)" value={seal.digest} mono wrap accent />
-                <Fact label="transaction" value={seal.txHash} mono wrap />
-                <Fact label="contract" value={seal.contract} mono wrap />
-                <Fact label="block" value={seal.blockNumber} mono />
-                {seal.submitter && <Fact label="submitter" value={seal.submitter} mono wrap />}
-                {seal.anchoredAt ? (
-                  <Fact
-                    label="sealed at"
-                    value={new Date(seal.anchoredAt * 1000).toISOString().replace(".000Z", " UTC")}
-                    mono
-                  />
-                ) : null}
-                {seal.similarityBp !== undefined ? (
-                  <Fact
-                    label="on-chain similarity"
-                    value={`${(seal.similarityBp / 100).toFixed(2)}% (${seal.similarityBp} bp)`}
-                    mono
-                  />
-                ) : (
-                  <Fact label="gas used" value={seal.gasUsed} mono />
-                )}
-              </dl>
-              {seal.explorerUrl && (
-                <a
-                  href={seal.explorerUrl}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  className="block border-t border-rule px-5 py-3 font-mono text-[11px] uppercase tracking-widest text-amber hover:bg-amber hover:text-ink transition-colors"
-                >
-                  {seal.network.includes("Sepolia")
-                    ? "Open on Etherscan (Sepolia) ↗"
-                    : seal.network.includes("Amoy")
-                      ? "Open on Polygonscan (Amoy) ↗"
-                      : "Open in block explorer ↗"}
-                </a>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {seal && (
-          <div className="mt-10 border-t border-rule pt-7">
-            <span className="eyebrow">re-verification</span>
-            <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-dim">
-              Hash the bundle again and ask the chain whether it has seen that digest. Flip the
-              switch to alter one field first: the digest changes, and the record no longer
-              matches. That is what tamper-evident means here.
-            </p>
-
-            <div className="mt-5 flex flex-wrap items-center gap-4">
+        <Station
+          index="II"
+          title="Trace"
+          caption={
+            traceMeta
+              ? `${traceMeta.providerLabel} returned ${traceMeta.totalFound} candidate pages in ${(traceMeta.elapsedMs / 1000).toFixed(1)}s. Each one is re-encoded here and scored against the specimen.`
+              : "The probe goes out to a live image-search backend. Every page it returns is treated as a lead, not a match."
+          }
+          active={Boolean(probe)}
+          done={scored.length > 0}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-x-10 gap-y-6">
+            <div className="flex min-w-0 flex-wrap items-center gap-3">
               <ConsoleButton
-                variant="quiet"
-                onClick={() => void runVerify()}
-                disabled={verifying}
+                variant="primary"
+                filled={tracing}
+                onClick={() => void runTrace()}
+                disabled={!probe || tracing || !searchReady}
                 className="w-full sm:w-auto"
               >
-                {verifying ? "Checking…" : "Re-verify against chain"}
+                {tracing ? "Tracing…" : "Run trace"}
               </ConsoleButton>
-
-              <label className="flex cursor-pointer items-center gap-2.5">
-                <input
-                  type="checkbox"
-                  checked={tampered}
-                  onChange={(e) => {
-                    setTampered(e.target.checked);
-                    setVerified(null);
-                  }}
-                  className="h-3.5 w-3.5 cursor-pointer accent-[var(--reject)]"
-                />
-                <span className="font-mono text-[11px] uppercase tracking-widest text-dim">
-                  Alter the bundle first
+              {!searchReady && (
+                <span className="datum text-reject">
+                  No search backend configured — set SERPAPI_API_KEY in .env.local
                 </span>
-              </label>
-            </div>
-
-            <div className="mt-6 grid gap-8 sm:grid-cols-2">
-              <HashStrip digest={seal.digest} tone="dim" label="sealed digest" />
-              <HashStrip
-                digest={checkDigest}
-                tone={tampered ? "reject" : "verdict"}
-                label={tampered ? "recomputed after edit" : "recomputed now"}
-              />
-            </div>
-
-            {verifyError && (
-              <p className="mt-5 border-l-2 border-reject pl-3 text-[13px] text-bone">
-                {verifyError}
-              </p>
-            )}
-
-            <AnimatePresence mode="wait">
-              {verified && (
-                <motion.div
-                  key={String(verified.onChain) + verified.digest}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.35 }}
-                  className="mt-7 border-l-2 pl-5"
-                  style={{
-                    borderColor: verified.onChain ? "var(--verdict)" : "var(--reject)",
-                  }}
-                >
-                  <p
-                    className="font-display text-[30px] leading-none"
-                    style={{ color: verified.onChain ? "var(--verdict)" : "var(--reject)" }}
-                  >
-                    {verified.onChain ? "Intact" : "Not on chain"}
-                  </p>
-                  <p className="mt-3 max-w-xl text-[13px] leading-relaxed text-dim">
-                    {verified.verdict}
-                  </p>
-                  {verified.onChain && verified.timestamp && (
-                    <p className="datum mt-3">
-                      sealed {new Date(verified.timestamp * 1000).toISOString()} by{" "}
-                      {verified.submitter} · similarity{" "}
-                      {((verified.similarityBp ?? 0) / 100).toFixed(2)}
-                    </p>
-                  )}
-                </motion.div>
               )}
-            </AnimatePresence>
+              {candidates.length > 0 && (
+                <span className="datum tabular-nums">
+                  {progress}/{candidates.length} examined · {scored.length} carried a face
+                </span>
+              )}
+            </div>
+
+            <ThresholdDial valueBp={thresholdBp} onChange={setThresholdBp} />
           </div>
-        )}
-      </Station>
+
+          {traceError && (
+            <p className="mt-5 border-l-2 border-reject pl-3 text-[13px] text-bone">{traceError}</p>
+          )}
+
+          {/* Multi-Probe Facet Filter Tabs */}
+          {candidates.length > 0 && availableFacets.length > 1 && (
+            <div className="mt-6 flex flex-wrap items-center gap-1.5 border-b border-rule pb-3">
+              <span className="font-mono text-[10px] uppercase tracking-wider text-dim mr-1">
+                Filter Leads:
+              </span>
+              <button
+                type="button"
+                onClick={() => setActiveFacet("all")}
+                className={`px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider border transition-colors ${activeFacet === "all"
+                    ? "border-amber bg-amber/20 text-amber font-semibold"
+                    : "border-rule text-dim hover:text-bone"
+                  }`}
+              >
+                All Leads ({candidates.length})
+              </button>
+              {availableFacets.map((facet) => {
+                const count = candidates.filter((c) => (c.probeCategory || "scene") === facet).length;
+                const match = candidates.find((c) => (c.probeCategory || "scene") === facet);
+                const label =
+                  match?.probeLabel ||
+                  (facet === "scene"
+                    ? "Scene Context"
+                    : facet === "osint"
+                      ? "Sherlock OSINT"
+                      : facet.startsWith("face_")
+                        ? `Person ${parseInt(facet.replace("face_", ""), 10) + 1}`
+                        : facet);
+                return (
+                  <button
+                    key={facet}
+                    type="button"
+                    onClick={() => setActiveFacet(facet)}
+                    className={`px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider border transition-colors ${activeFacet === facet
+                        ? "border-verdict bg-verdict/20 text-verdict font-semibold"
+                        : "border-rule text-dim hover:text-bone"
+                      }`}
+                  >
+                    {label} ({count})
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {filteredCandidates.length > 0 && (
+            <ul className="mt-7 grid gap-px border border-rule bg-rule sm:grid-cols-2">
+              {filteredCandidates.map((c, i) => (
+                <CandidateRow
+                  key={c.key}
+                  c={c}
+                  thresholdBp={thresholdBp}
+                  isBest={best?.key === c.key}
+                  index={i}
+                />
+              ))}
+            </ul>
+          )}
+        </Station>
+
+        <Station
+          index="III"
+          title="Adjudication"
+          caption="One candidate clears the threshold and becomes the record. The rest stay on the docket with their scores, so the decision is inspectable."
+          active={scored.length > 0}
+          done={Boolean(bundle)}
+        >
+          {!bundle && scored.length > 0 && (
+            <p className="max-w-xl text-[13px] leading-relaxed text-dim">
+              Nothing cleared {(thresholdBp / 100).toFixed(0)}. The highest score was{" "}
+              <span className="font-mono text-bone">
+                {scored.length
+                  ? (Math.max(...scored.map((s) => s.similarityBp as number)) / 100).toFixed(2)
+                  : "—"}
+              </span>
+              . Lower the threshold to inspect near misses, or re-capture the specimen.
+            </p>
+          )}
+          {!bundle && scored.length === 0 && (
+            <p className="text-[13px] text-dim">Run the trace to populate this station.</p>
+          )}
+
+          {bundle && best && (
+            <div className="grid w-full min-w-0 max-w-full gap-8 lg:grid-cols-[minmax(0,1fr)_380px]">
+              <div>
+                <span className="eyebrow">match of record</span>
+                <a
+                  href={best.url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="mt-2 block font-display text-[26px] leading-tight text-bone underline decoration-amber decoration-1 underline-offset-[6px] hover:text-amber"
+                >
+                  {best.title}
+                </a>
+                <p className="datum mt-2">{best.url}</p>
+
+                <dl className="mt-6 grid grid-cols-2 gap-x-8 gap-y-4 sm:grid-cols-3">
+                  <Fact label="similarity" value={((best.similarityBp as number) / 100).toFixed(2)} accent />
+                  <Fact label="source" value={best.source} />
+                  <Fact label="encoder" value="faceres 1024-d" />
+                  <Fact label="found by" value={traceMeta?.providerLabel ?? "—"} />
+                  <Fact label="candidates scored" value={String(scored.length)} />
+                  <Fact
+                    label="rejected"
+                    value={String(scored.filter((s) => (s.similarityBp as number) < thresholdBp).length)}
+                  />
+                </dl>
+
+                <Disclosure label="canonical bundle — the exact bytes that get hashed">
+                  <pre className="hash mt-3 max-h-56 overflow-auto whitespace-pre-wrap border border-rule bg-bench p-4 text-dim">
+                    {canonicalJson(bundle)}
+                  </pre>
+                </Disclosure>
+              </div>
+
+              <div className="self-start border border-rule bg-bench p-5">
+                {best.thumb && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={best.thumb}
+                    alt=""
+                    className="mb-4 aspect-square w-full border border-rule object-cover"
+                  />
+                )}
+                <HashStrip digest={digest} label="bundle digest · keccak256" />
+                <BundleMetadataInspector bundle={bundle} />
+              </div>
+            </div>
+          )}
+
+          {/* Discovered Evidence 3D Carousel */}
+          {scored.length > 0 && (
+            <CandidateCarousel
+              candidates={scored}
+              thresholdBp={thresholdBp}
+              selectedKey={best?.key ?? null}
+              onSelect={(key) => setSelectedCandidateKey(key)}
+            />
+          )}
+        </Station>
+
+        <Station
+          index="IV"
+          title="Seal"
+          caption="The digest goes on chain. The bundle itself does not — the chain only needs to prove the bundle has not changed since this moment."
+          active={Boolean(bundle)}
+          done={Boolean(seal)}
+          last
+        >
+          <div className="flex flex-wrap items-center gap-3">
+            <ConsoleButton
+              variant="primary"
+              filled={sealing || Boolean(seal)}
+              onClick={() => void runSeal()}
+              disabled={!bundle || sealing || !chainReady || Boolean(seal)}
+              className="w-full sm:w-auto"
+            >
+              {sealing ? "Writing…" : seal?.isExisting ? "Already Sealed" : seal ? "Sealed" : "Seal to chain"}
+            </ConsoleButton>
+            {!chainReady && (
+              <span className="datum text-reject">
+                {status?.chain.registry
+                  ? `Chain unreachable at ${status.chain.label}`
+                  : "No registry deployed — run npm run chain:node then npm run chain:deploy"}
+              </span>
+            )}
+          </div>
+
+          {sealError && (
+            <p
+              className={`mt-5 border-l-2 pl-3 text-[13px] text-bone ${seal?.isExisting ? "border-amber" : "border-reject"
+                }`}
+            >
+              {seal?.isExisting && (
+                <span className="mr-2 font-mono text-[11px] font-semibold uppercase tracking-wider text-amber">
+                  Notice:
+                </span>
+              )}
+              {sealError}
+            </p>
+          )}
+
+          <AnimatePresence>
+            {seal && (
+              <motion.div
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+                className="mt-7 border border-rule bg-bench"
+              >
+                <div className="flex items-center justify-between border-b border-rule px-5 py-3">
+                  <span className="eyebrow flex items-center gap-2">
+                    {seal.isExisting ? "previously sealed on-chain record" : "on-chain receipt"}
+                    {seal.isExisting && (
+                      <span className="rounded border border-amber/30 bg-amber/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-amber">
+                        Pre-anchored
+                      </span>
+                    )}
+                  </span>
+                  <span className="font-mono text-[11px] text-verdict">
+                    {seal.network} · chain {seal.chainId}
+                  </span>
+                </div>
+                <dl className="grid gap-x-8 gap-y-4 p-5 sm:grid-cols-2">
+                  <Fact label="digest (sealed id)" value={seal.digest} mono wrap accent />
+                  <Fact label="transaction" value={seal.txHash} mono wrap />
+                  <Fact label="contract" value={seal.contract} mono wrap />
+                  <Fact label="block" value={seal.blockNumber} mono />
+                  {seal.submitter && <Fact label="submitter" value={seal.submitter} mono wrap />}
+                  {seal.anchoredAt ? (
+                    <Fact
+                      label="sealed at"
+                      value={new Date(seal.anchoredAt * 1000).toISOString().replace(".000Z", " UTC")}
+                      mono
+                    />
+                  ) : null}
+                  {seal.similarityBp !== undefined ? (
+                    <Fact
+                      label="on-chain similarity"
+                      value={`${(seal.similarityBp / 100).toFixed(2)}% (${seal.similarityBp} bp)`}
+                      mono
+                    />
+                  ) : (
+                    <Fact label="gas used" value={seal.gasUsed} mono />
+                  )}
+                </dl>
+                {seal.explorerUrl && (
+                  <a
+                    href={seal.explorerUrl}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="block border-t border-rule px-5 py-3 font-mono text-[11px] uppercase tracking-widest text-amber hover:bg-amber hover:text-ink transition-colors"
+                  >
+                    {seal.network.includes("Sepolia")
+                      ? "Open on Etherscan (Sepolia) ↗"
+                      : seal.network.includes("Amoy")
+                        ? "Open on Polygonscan (Amoy) ↗"
+                        : "Open in block explorer ↗"}
+                  </a>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {seal && (
+            <div className="mt-10 border-t border-rule pt-7">
+              <span className="eyebrow">re-verification</span>
+              <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-dim">
+                Hash the bundle again and ask the chain whether it has seen that digest. Flip the
+                switch to alter one field first: the digest changes, and the record no longer
+                matches. That is what tamper-evident means here.
+              </p>
+
+              <div className="mt-5 flex flex-wrap items-center gap-4">
+                <ConsoleButton
+                  variant="quiet"
+                  onClick={() => void runVerify()}
+                  disabled={verifying}
+                  className="w-full sm:w-auto"
+                >
+                  {verifying ? "Checking…" : "Re-verify against chain"}
+                </ConsoleButton>
+
+                <label className="flex cursor-pointer items-center gap-2.5">
+                  <input
+                    type="checkbox"
+                    checked={tampered}
+                    onChange={(e) => {
+                      setTampered(e.target.checked);
+                      setVerified(null);
+                    }}
+                    className="h-3.5 w-3.5 cursor-pointer accent-[var(--reject)]"
+                  />
+                  <span className="font-mono text-[11px] uppercase tracking-widest text-dim">
+                    Alter the bundle first
+                  </span>
+                </label>
+              </div>
+
+              <div className="mt-6 grid gap-8 sm:grid-cols-2">
+                <HashStrip digest={seal.digest} tone="dim" label="sealed digest" />
+                <HashStrip
+                  digest={checkDigest}
+                  tone={tampered ? "reject" : "verdict"}
+                  label={tampered ? "recomputed after edit" : "recomputed now"}
+                />
+              </div>
+
+              {verifyError && (
+                <p className="mt-5 border-l-2 border-reject pl-3 text-[13px] text-bone">
+                  {verifyError}
+                </p>
+              )}
+
+              <AnimatePresence mode="wait">
+                {verified && (
+                  <motion.div
+                    key={String(verified.onChain) + verified.digest}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.35 }}
+                    className="mt-7 border-l-2 pl-5"
+                    style={{
+                      borderColor: verified.onChain ? "var(--verdict)" : "var(--reject)",
+                    }}
+                  >
+                    <p
+                      className="font-display text-[30px] leading-none"
+                      style={{ color: verified.onChain ? "var(--verdict)" : "var(--reject)" }}
+                    >
+                      {verified.onChain ? "Intact" : "Not on chain"}
+                    </p>
+                    <p className="mt-3 max-w-xl text-[13px] leading-relaxed text-dim">
+                      {verified.verdict}
+                    </p>
+                    {verified.onChain && verified.timestamp && (
+                      <p className="datum mt-3">
+                        sealed {new Date(verified.timestamp * 1000).toISOString()} by{" "}
+                        {verified.submitter} · similarity{" "}
+                        {((verified.similarityBp ?? 0) / 100).toFixed(2)}
+                      </p>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
+        </Station>
 
         <footer className="mt-4 border-t border-rule pt-6">
           <div className="flex flex-wrap items-baseline justify-between gap-x-8 gap-y-2">
@@ -875,68 +883,68 @@ function BundleMetadataInspector({ bundle }: { bundle: EvidenceBundle }) {
     value: string;
     isUrl?: boolean;
   }> = [
-    {
-      key: "probeImageSha256",
-      label: "probeImageSha256",
-      description: "SHA-256 of probe JPEG bytes",
-      value: bundle.probeImageSha256,
-    },
-    {
-      key: "probeDescriptorSha256",
-      label: "probeDescriptorSha256",
-      description: "Quantized probe 1024-d face embedding hash",
-      value: bundle.probeDescriptorSha256,
-    },
-    {
-      key: "matchImageSha256",
-      label: "matchImageSha256",
-      description: "SHA-256 of candidate matched image bytes",
-      value: bundle.matchImageSha256,
-    },
-    {
-      key: "matchUrl",
-      label: "matchUrl",
-      description: "Public web URL of matched finding",
-      value: bundle.matchUrl,
-      isUrl: true,
-    },
-    {
-      key: "matchSource",
-      label: "matchSource",
-      description: "Matched domain host",
-      value: bundle.matchSource,
-    },
-    {
-      key: "matchTitle",
-      label: "matchTitle",
-      description: "Matched post or page title",
-      value: bundle.matchTitle,
-    },
-    {
-      key: "similarityBp",
-      label: "similarityBp",
-      description: "Cosine face similarity (basis points / %)",
-      value: `${bundle.similarityBp} bp (${(bundle.similarityBp / 100).toFixed(2)}%)`,
-    },
-    {
-      key: "encoder",
-      label: "encoder",
-      description: "Face descriptor model",
-      value: bundle.encoder,
-    },
-    {
-      key: "provider",
-      label: "provider",
-      description: "Visual search backend provider",
-      value: bundle.provider,
-    },
-    {
-      key: "v",
-      label: "v",
-      description: "Evidence bundle schema version",
-      value: String(bundle.v),
-    },
-  ];
+      {
+        key: "probeImageSha256",
+        label: "probeImageSha256",
+        description: "SHA-256 of probe JPEG bytes",
+        value: bundle.probeImageSha256,
+      },
+      {
+        key: "probeDescriptorSha256",
+        label: "probeDescriptorSha256",
+        description: "Quantized probe 1024-d face embedding hash",
+        value: bundle.probeDescriptorSha256,
+      },
+      {
+        key: "matchImageSha256",
+        label: "matchImageSha256",
+        description: "SHA-256 of candidate matched image bytes",
+        value: bundle.matchImageSha256,
+      },
+      {
+        key: "matchUrl",
+        label: "matchUrl",
+        description: "Public web URL of matched finding",
+        value: bundle.matchUrl,
+        isUrl: true,
+      },
+      {
+        key: "matchSource",
+        label: "matchSource",
+        description: "Matched domain host",
+        value: bundle.matchSource,
+      },
+      {
+        key: "matchTitle",
+        label: "matchTitle",
+        description: "Matched post or page title",
+        value: bundle.matchTitle,
+      },
+      {
+        key: "similarityBp",
+        label: "similarityBp",
+        description: "Cosine face similarity (basis points / %)",
+        value: `${bundle.similarityBp} bp (${(bundle.similarityBp / 100).toFixed(2)}%)`,
+      },
+      {
+        key: "encoder",
+        label: "encoder",
+        description: "Face descriptor model",
+        value: bundle.encoder,
+      },
+      {
+        key: "provider",
+        label: "provider",
+        description: "Visual search backend provider",
+        value: bundle.provider,
+      },
+      {
+        key: "v",
+        label: "v",
+        description: "Evidence bundle schema version",
+        value: String(bundle.v),
+      },
+    ];
 
   return (
     <div className="mt-4 border-t border-rule pt-3.5">
@@ -978,22 +986,20 @@ function BundleMetadataInspector({ bundle }: { bundle: EvidenceBundle }) {
                   <button
                     type="button"
                     onClick={() => setViewMode("kv")}
-                    className={`px-2 py-0.5 uppercase tracking-wider transition-colors ${
-                      viewMode === "kv"
+                    className={`px-2 py-0.5 uppercase tracking-wider transition-colors ${viewMode === "kv"
                         ? "bg-bench-hi text-amber border border-rule-hi"
                         : "text-dim hover:text-bone"
-                    }`}
+                      }`}
                   >
                     Key-Value
                   </button>
                   <button
                     type="button"
                     onClick={() => setViewMode("json")}
-                    className={`px-2 py-0.5 uppercase tracking-wider transition-colors ${
-                      viewMode === "json"
+                    className={`px-2 py-0.5 uppercase tracking-wider transition-colors ${viewMode === "json"
                         ? "bg-bench-hi text-amber border border-rule-hi"
                         : "text-dim hover:text-bone"
-                    }`}
+                      }`}
                   >
                     Raw JSON
                   </button>
@@ -1195,8 +1201,19 @@ function CandidateRow({
           </div>
           <div className="mt-1 flex items-center justify-between gap-2">
             <p className="datum truncate">{c.source}</p>
-            <span className="shrink-0 border border-rule/60 bg-bench/60 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-dim">
-              {c.probeLabel || (c.probeCategory === "osint" ? "Sherlock OSINT" : c.probeCategory?.startsWith("face_") ? "Person Target" : "Scene Context")}
+            <span
+              className={`shrink-0 border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider ${
+                c.probeCategory?.startsWith("face_")
+                  ? "border-verdict/60 bg-verdict/10 text-verdict font-semibold"
+                  : "border-rule/60 bg-bench/60 text-dim"
+              }`}
+            >
+              {c.probeLabel ||
+                (c.probeCategory === "osint"
+                  ? "Sherlock OSINT"
+                  : c.probeCategory?.startsWith("face_")
+                    ? `Person ${parseInt(c.probeCategory.replace("face_", ""), 10) + 1}`
+                    : "Scene Context")}
             </span>
           </div>
 

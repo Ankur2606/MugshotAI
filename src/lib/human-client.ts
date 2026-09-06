@@ -11,7 +11,7 @@ import type { Human, Config, Result, FaceResult } from "@vladmandic/human";
 
 export const ENCODER_ID = "human/blazeface+facemesh+faceres";
 
-const config: Partial<Config> = {
+export const probeConfig: Partial<Config> = {
   // Weights are served from public/models, so nothing is fetched from a CDN.
   modelBasePath: "/models/",
   backend: "webgl",
@@ -63,7 +63,7 @@ export function loadEngine(onProgress?: (msg: string) => void): Promise<Human> {
     // next.config.ts aliases this specifier to Human's browser ESM bundle;
     // left alone it resolves to the Node build and drags in tfjs-node.
     const { default: HumanCtor } = await import("@vladmandic/human");
-    const human = new HumanCtor(config);
+    const human = new HumanCtor(probeConfig);
     announce("loading models");
     await human.load();
     announce("warming up");
@@ -113,10 +113,38 @@ export async function readFace(
   input: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement,
 ): Promise<FaceReading | null> {
   const human = await loadEngine();
-  const result: Result = await human.detect(input);
+  const result: Result = await human.detect(input, probeConfig);
   if (!result.face || result.face.length === 0) return null;
   const best = [...result.face].sort((a, b) => (b.faceScore ?? 0) - (a.faceScore ?? 0))[0];
   return toReading(best);
+}
+
+/**
+ * Fast face reading specifically for candidate thumbnails during adjudication.
+ * - Single-face focus (maxDetected: 1)
+ * - Antispoof, liveness, and iris disabled (static candidate web images don't require liveness verification)
+ * - Drastically reduces GPU/WebGL load during batch scoring of candidate images.
+ */
+const candidateScoreConfig: Partial<Config> = {
+  face: {
+    enabled: true,
+    detector: { rotation: true, maxDetected: 1, minConfidence: 0.35, return: false },
+    mesh: { enabled: true },
+    iris: { enabled: false },
+    description: { enabled: true },
+    emotion: { enabled: false },
+    antispoof: { enabled: false },
+    liveness: { enabled: false },
+  },
+};
+
+export async function scoreCandidateFace(
+  input: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement,
+): Promise<FaceReading | null> {
+  const human = await loadEngine();
+  const result: Result = await human.detect(input, candidateScoreConfig);
+  if (!result.face || result.face.length === 0) return null;
+  return toReading(result.face[0]);
 }
 
 /** Detect and encode all faces present in the input. */
@@ -124,12 +152,22 @@ export async function readAllFaces(
   input: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement,
 ): Promise<FaceReading[]> {
   const human = await loadEngine();
-  const result: Result = await human.detect(input);
+  const result: Result = await human.detect(input, probeConfig);
   if (!result.face || result.face.length === 0) return [];
   return result.face
     .map(toReading)
     .filter((r): r is FaceReading => r !== null)
     .sort((a, b) => b.score - a.score);
+}
+
+/**
+ * Restore probe configuration on the engine after batch candidate scoring
+ * so that any subsequent specimen actions immediately have multi-face
+ * discovery, liveness, and anti-spoof enabled.
+ */
+export async function resetEngineToProbeConfig(): Promise<void> {
+  const human = await loadEngine();
+  human.validate(probeConfig);
 }
 
 /**

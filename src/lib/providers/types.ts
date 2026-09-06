@@ -20,6 +20,7 @@ export type ProbeBox = {
   label: string;
   box?: [number, number, number, number]; // [x, y, w, h] in image pixel space
   boxRaw?: [number, number, number, number]; // [x, y, w, h] normalized 0..1
+  isPrimary?: boolean; // true when explicitly selected as target by user
 };
 
 export type SearchOutcome = {
