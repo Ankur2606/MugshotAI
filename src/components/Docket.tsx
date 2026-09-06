@@ -11,6 +11,7 @@ import { ThresholdDial } from "./ThresholdDial";
 import { HashStrip } from "./HashStrip";
 import { CalibrationScale } from "./CalibrationScale";
 import { Station } from "./Station";
+import { CandidateCarousel } from "./CandidateCarousel";
 import {
   ENCODER_ID,
   imageFromDataUrl,
@@ -31,6 +32,8 @@ type CandidateIn = {
   title: string;
   source: string;
   providerScoreBp?: number;
+  probeCategory?: string;
+  probeLabel?: string;
 };
 
 type Scored = CandidateIn & {
@@ -102,6 +105,8 @@ export function Docket() {
   } | null>(null);
   const [candidates, setCandidates] = useState<Scored[]>([]);
   const [traceError, setTraceError] = useState<string | null>(null);
+  const [selectedCandidateKey, setSelectedCandidateKey] = useState<string | null>(null);
+  const [activeFacet, setActiveFacet] = useState<string>("all");
 
   const [sealing, setSealing] = useState(false);
   const [seal, setSeal] = useState<Seal | null>(null);
@@ -137,10 +142,14 @@ export function Docket() {
   const best = useMemo(() => {
     const accepted = scored.filter((c) => (c.similarityBp as number) >= thresholdBp);
     if (accepted.length === 0) return null;
+    if (selectedCandidateKey) {
+      const manual = accepted.find((c) => c.key === selectedCandidateKey);
+      if (manual) return manual;
+    }
     return accepted.reduce((a, b) =>
       (b.similarityBp as number) > (a.similarityBp as number) ? b : a,
     );
-  }, [scored, thresholdBp]);
+  }, [scored, thresholdBp, selectedCandidateKey]);
 
   const bundle: EvidenceBundle | null = useMemo(() => {
     if (!probe || !best || !traceMeta || best.similarityBp === null || !best.imageSha256) {
@@ -177,6 +186,8 @@ export function Docket() {
   const resetDownstream = useCallback(() => {
     setTraceMeta(null);
     setCandidates([]);
+    setSelectedCandidateKey(null);
+    setActiveFacet("all");
     setTraceError(null);
     setSeal(null);
     setSealError(null);
@@ -194,9 +205,14 @@ export function Docket() {
     [resetDownstream],
   );
 
-  /** Fetch one candidate image and re-encode its face against the probe. */
+  /** Fetch one candidate image and re-encode its face against the probe faces. */
   const scoreOne = useCallback(
-    async (key: string, imageUrl: string, probeEmbedding: number[]) => {
+    async (
+      key: string,
+      imageUrl: string,
+      probeEmbeddings: number[][],
+      probeCategory?: string,
+    ) => {
       const patch = (p: Partial<Scored>) =>
         setCandidates((prev) => prev.map((c) => (c.key === key ? { ...c, ...p } : c)));
 
@@ -216,17 +232,30 @@ export function Docket() {
           patch({ phase: "skipped", note: "no face detected on this page image" });
           return;
         }
-        // refuse to score a face too small or too uncertain to compare
-        // fairly; a low-res crop drifts toward the mean face and would
-        // otherwise post a misleadingly high similarity
+        // refuse to score a face too small or too uncertain to compare fairly
         const gate = passesQualityGate(reading);
         if (!gate.ok) {
           patch({ phase: "skipped", note: gate.reason });
           return;
         }
+
+        let maxSim = 0;
+        if (probeCategory && probeCategory.startsWith("face_")) {
+          const faceIdx = parseInt(probeCategory.replace("face_", ""), 10);
+          if (probeEmbeddings[faceIdx]) {
+            maxSim = cosineSimilarityBp(probeEmbeddings[faceIdx], reading.embedding);
+          }
+        }
+        if (maxSim === 0) {
+          for (const emb of probeEmbeddings) {
+            const sim = cosineSimilarityBp(emb, reading.embedding);
+            if (sim > maxSim) maxSim = sim;
+          }
+        }
+
         patch({
           phase: "scored",
-          similarityBp: cosineSimilarityBp(probeEmbedding, reading.embedding),
+          similarityBp: maxSim,
         });
       } catch (e) {
         patch({
@@ -247,6 +276,39 @@ export function Docket() {
     try {
       const form = new FormData();
       form.append("image", probe.blob, "probe.jpg");
+
+      // Multi-probe definitions: include scene + each detected face
+      const probesList: Array<{ id: string; label: string; box?: [number, number, number, number]; boxRaw?: [number, number, number, number] }> = [];
+      if (probe.selectedFaceIndex === "all" && probe.allReadings && probe.allReadings.length > 0) {
+        probe.allReadings.forEach((r, idx) => {
+          probesList.push({
+            id: `face_${idx}`,
+            label: `Person ${idx + 1}`,
+            box: r.box,
+            boxRaw: r.boxRaw,
+          });
+        });
+      } else if (typeof probe.selectedFaceIndex === "number" && probe.allReadings?.[probe.selectedFaceIndex]) {
+        const target = probe.allReadings[probe.selectedFaceIndex];
+        probesList.push({
+          id: `face_${probe.selectedFaceIndex}`,
+          label: `Person ${probe.selectedFaceIndex + 1}`,
+          box: target.box,
+          boxRaw: target.boxRaw,
+        });
+      } else if (probe.reading?.box) {
+        probesList.push({
+          id: "face_0",
+          label: "Person 1",
+          box: probe.reading.box,
+          boxRaw: probe.reading.boxRaw,
+        });
+      }
+
+      if (probesList.length > 0) {
+        form.append("probes", JSON.stringify(probesList));
+      }
+
       const res = await fetch("/api/search", { method: "POST", body: form });
       const json = await res.json();
       if (!res.ok) {
@@ -280,13 +342,18 @@ export function Docket() {
         return;
       }
 
+      const allEmbeddings =
+        probe.allReadings && probe.allReadings.length > 0
+          ? probe.allReadings.map((r) => r.embedding)
+          : [probe.reading.embedding];
+
       // Small worker pool so the browser is not encoding 24 faces at once.
       const queue = [...list];
       const workers = Array.from({ length: CONCURRENCY }, async () => {
         while (queue.length > 0 && !abortRef.current) {
           const next = queue.shift();
           if (!next) break;
-          await scoreOne(next.key, next.imageUrl, probe.reading.embedding);
+          await scoreOne(next.key, next.imageUrl, allEmbeddings, next.probeCategory);
         }
       });
       await Promise.all(workers);
@@ -369,11 +436,24 @@ export function Docket() {
     ? candidates.filter((c) => c.phase === "scored" || c.phase === "skipped").length
     : 0;
 
+  const availableFacets = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of candidates) {
+      set.add(c.probeCategory || "scene");
+    }
+    return Array.from(set);
+  }, [candidates]);
+
+  const filteredCandidates = useMemo(() => {
+    if (activeFacet === "all") return candidates;
+    return candidates.filter((c) => (c.probeCategory || "scene") === activeFacet);
+  }, [candidates, activeFacet]);
+
   return (
     <>
       <GateIntro />
       <DepthField />
-      <div className="relative z-10 mx-auto max-w-[1180px] px-6 pb-32 sm:px-10">
+      <div className="relative z-10 mx-auto w-full min-w-0 max-w-[1180px] overflow-x-clip px-6 pb-32 sm:px-10">
         <Masthead status={status} />
 
       <Station
@@ -427,9 +507,52 @@ export function Docket() {
           <p className="mt-5 border-l-2 border-reject pl-3 text-[13px] text-bone">{traceError}</p>
         )}
 
-        {candidates.length > 0 && (
+        {/* Multi-Probe Facet Filter Tabs */}
+        {candidates.length > 0 && availableFacets.length > 1 && (
+          <div className="mt-6 flex flex-wrap items-center gap-1.5 border-b border-rule pb-3">
+            <span className="font-mono text-[10px] uppercase tracking-wider text-dim mr-1">
+              Filter Leads:
+            </span>
+            <button
+              type="button"
+              onClick={() => setActiveFacet("all")}
+              className={`px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider border transition-colors ${
+                activeFacet === "all"
+                  ? "border-amber bg-amber/20 text-amber font-semibold"
+                  : "border-rule text-dim hover:text-bone"
+              }`}
+            >
+              All Leads ({candidates.length})
+            </button>
+            {availableFacets.map((facet) => {
+              const count = candidates.filter((c) => (c.probeCategory || "scene") === facet).length;
+              const label =
+                facet === "scene"
+                  ? "Scene Context"
+                  : facet === "osint"
+                    ? "Sherlock OSINT"
+                    : facet.replace("face_", "Person ");
+              return (
+                <button
+                  key={facet}
+                  type="button"
+                  onClick={() => setActiveFacet(facet)}
+                  className={`px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider border transition-colors ${
+                    activeFacet === facet
+                      ? "border-verdict bg-verdict/20 text-verdict font-semibold"
+                      : "border-rule text-dim hover:text-bone"
+                  }`}
+                >
+                  {label} ({count})
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {filteredCandidates.length > 0 && (
           <ul className="mt-7 grid gap-px border border-rule bg-rule sm:grid-cols-2">
-            {candidates.map((c, i) => (
+            {filteredCandidates.map((c, i) => (
               <CandidateRow
                 key={c.key}
                 c={c}
@@ -465,7 +588,7 @@ export function Docket() {
         )}
 
         {bundle && best && (
-          <div className="grid gap-8 lg:grid-cols-[1fr_380px]">
+          <div className="grid w-full min-w-0 max-w-full gap-8 lg:grid-cols-[minmax(0,1fr)_380px]">
             <div>
               <span className="eyebrow">match of record</span>
               <a
@@ -510,6 +633,16 @@ export function Docket() {
               <BundleMetadataInspector bundle={bundle} />
             </div>
           </div>
+        )}
+
+        {/* Discovered Evidence 3D Carousel */}
+        {scored.length > 0 && (
+          <CandidateCarousel
+            candidates={scored}
+            thresholdBp={thresholdBp}
+            selectedKey={best?.key ?? null}
+            onSelect={(key) => setSelectedCandidateKey(key)}
+          />
         )}
       </Station>
 
@@ -1060,7 +1193,12 @@ function CandidateRow({
               {c.similarityBp !== null ? (c.similarityBp / 100).toFixed(2) : "··"}
             </span>
           </div>
-          <p className="datum mt-0.5 truncate">{c.source}</p>
+          <div className="mt-1 flex items-center justify-between gap-2">
+            <p className="datum truncate">{c.source}</p>
+            <span className="shrink-0 border border-rule/60 bg-bench/60 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-dim">
+              {c.probeLabel || (c.probeCategory === "osint" ? "Sherlock OSINT" : c.probeCategory?.startsWith("face_") ? "Person Target" : "Scene Context")}
+            </span>
+          </div>
 
           <div className="mt-2.5">
             <CalibrationScale
