@@ -28,15 +28,12 @@ type SiteEntry = {
   regexCheck?: string;                    // Username must match this regex
   isNSFW?: boolean;
   request_method?: "GET" | "POST" | "HEAD";
-  request_payload?: Record<string, string>;
+  request_payload?: Record<string, unknown>; // Loosened: some sites send nested JSON objects
   headers?: Record<string, string>;
   username_claimed?: string;              // Example username for validation
 };
 
-type SitesData = {
-  $schema?: string;
-  [siteName: string]: SiteEntry | string | undefined;
-};
+type SitesData = Record<string, SiteEntry | string | undefined>;
 
 export type SherlockResult = {
   platform: string;
@@ -81,7 +78,7 @@ export async function sherlockSearch(
     timeoutMs = TIMEOUT_MS,
   } = options;
 
-  const sites = SITES_RAW as SitesData;
+  const sites = SITES_RAW as unknown as SitesData;
   const allSiteNames = Object.keys(sites).filter((k) => k !== "$schema");
 
   // Sort: priority sites first
