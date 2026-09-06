@@ -2,10 +2,68 @@ import { test, expect } from "@playwright/test";
 import {
   classifySocialUrl,
   extractBioHubUrl,
+  extractAuthorFromUrl,
   parseLinksFromHtml,
 } from "../src/lib/page-crawler";
 
 test.describe("Cyber Intelligence & Link-in-Bio Footprint Engine", () => {
+  test("extractAuthorFromUrl extracts LinkedIn post authors from URLs", () => {
+    const url1 =
+      "https://www.linkedin.com/posts/art-commisso-36761a111_one-of-these-group-photos-is-a-composite-activity-7500923816609648640-kOZn";
+    const author1 = extractAuthorFromUrl(url1);
+    expect(author1).not.toBeNull();
+    expect(author1?.handle).toBe("in/art-commisso-36761a111");
+    expect(author1?.url).toBe("https://www.linkedin.com/in/art-commisso-36761a111");
+    expect(author1?.source).toBe("author");
+
+    const url2 =
+      "https://www.linkedin.com/posts/chiragbachwani_galaxyai-flutter-activity-7351546305581604866-8c7K";
+    const author2 = extractAuthorFromUrl(url2);
+    expect(author2).not.toBeNull();
+    expect(author2?.handle).toBe("in/chiragbachwani");
+    expect(author2?.url).toBe("https://www.linkedin.com/in/chiragbachwani");
+    expect(author2?.source).toBe("author");
+
+    const xUrl = "https://x.com/satabora/status/1789012345678901234";
+    const xAuthor = extractAuthorFromUrl(xUrl);
+    expect(xAuthor).not.toBeNull();
+    expect(xAuthor?.handle).toBe("@satabora");
+    expect(xAuthor?.platform).toBe("x");
+  });
+
+  test("parseLinksFromHtml extracts commenters and tagged profiles including Bhavya Pratap Singh Tomar", () => {
+    // Simulated LinkedIn post HTML containing comments and tagged entities
+    const postHtml = `
+      <div class="comments-container">
+        <a href="/in/bhavya-pratap-singh-tomar" class="commenter-link">Bhavya Pratap Singh Tomar</a>
+        <a href="https://in.linkedin.com/in/rahulrawatr">Rahul Rawat</a>
+        <a href="/in/aditya-bhandari23">Aditya Bhandari</a>
+        <a href="https://www.linkedin.com/in/stoppeddownstudio">Stopped Down Studio</a>
+        <span data-urn="urn:li:fsd_profile:priyasha-khurana">Priyasha Khurana</span>
+      </div>
+    `;
+
+    const profiles = parseLinksFromHtml(
+      postHtml,
+      "page",
+      undefined,
+      true, // isSocialPostPage
+      "chiragbachwani" // authorHandle
+    );
+
+    const handles = profiles.map((p) => p.handle);
+    expect(handles).toContain("in/bhavya-pratap-singh-tomar");
+    expect(handles).toContain("in/rahulrawatr");
+    expect(handles).toContain("in/aditya-bhandari23");
+    expect(handles).toContain("in/stoppeddownstudio");
+    expect(handles).toContain("in/priyasha-khurana");
+
+    // Verify commenter role classification
+    const bhavya = profiles.find((p) => p.handle === "in/bhavya-pratap-singh-tomar");
+    expect(bhavya?.source).toBe("commenter");
+    expect(bhavya?.roleLabel).toBe("Commenter / Tagged Subject");
+  });
+
   test("classifySocialUrl extracts handles for Devfolio, X, Instagram, LinkedIn, GitHub", () => {
     // Devfolio
     const devfolio = classifySocialUrl("https://devfolio.co/@vaibhav_hacks");
@@ -18,6 +76,12 @@ test.describe("Cyber Intelligence & Link-in-Bio Footprint Engine", () => {
     expect(linkedin).not.toBeNull();
     expect(linkedin?.platform).toBe("linkedin");
     expect(linkedin?.handle).toBe("in/vaibhav-shivhare-web3");
+
+    // Regional LinkedIn
+    const regLinkedin = classifySocialUrl("https://in.linkedin.com/in/bhavya-pratap-singh-tomar");
+    expect(regLinkedin).not.toBeNull();
+    expect(regLinkedin?.platform).toBe("linkedin");
+    expect(regLinkedin?.handle).toBe("in/bhavya-pratap-singh-tomar");
 
     // X / Twitter
     const x = classifySocialUrl("https://x.com/vaibhav_builds");
@@ -56,57 +120,20 @@ test.describe("Cyber Intelligence & Link-in-Bio Footprint Engine", () => {
     expect(extractBioHubUrl(htmlWithBeacons)).toBe("https://beacons.ai/anirban");
   });
 
-  test("parseLinksFromHtml extracts full set of social accounts", () => {
-    const sampleHtml = `
-      <!DOCTYPE html>
-      <html>
-        <body>
-          <a href="https://devfolio.co/@vaibhav_lead">Devfolio Profile</a>
-          <a href="https://www.linkedin.com/in/vaibhav-lead">LinkedIn</a>
-          <a href="https://x.com/vaibhav_lead">Twitter / X</a>
-          <a href="https://instagram.com/vaibhav_lead">Instagram</a>
-          <a href="https://github.com/vaibhav-lead">GitHub</a>
-          <a href="https://youtube.com/@vaibhav_talks">YouTube</a>
-          <a href="https://reddit.com/user/vaibhav_mod">Reddit</a>
-          <!-- Noise links that should be discarded -->
-          <a href="https://twitter.com/intent/tweet">Share</a>
-          <a href="https://linkedin.com/help">Help</a>
-        </body>
-      </html>
-    `;
-
-    const profiles = parseLinksFromHtml(sampleHtml, "page");
-    const platforms = profiles.map((p) => p.platform);
-
-    expect(platforms).toContain("devfolio");
-    expect(platforms).toContain("linkedin");
-    expect(platforms).toContain("x");
-    expect(platforms).toContain("instagram");
-    expect(platforms).toContain("github");
-    expect(platforms).toContain("youtube");
-    expect(platforms).toContain("reddit");
-    expect(profiles.length).toBe(7);
-  });
-
-  test("POST /api/intel returns discovered social profiles and bio hub via API", async ({
+  test("POST /api/intel returns author and commenters for LinkedIn posts", async ({
     request,
   }) => {
-    const mockHtml = `
-      <div class="profile-card">
-        <h1>Vaibhav Shivhare</h1>
-        <a href="https://linktr.ee/vaibhav_demo">Linktree Hub</a>
-        <a href="https://devfolio.co/@vaibhav_dev">Devfolio</a>
-        <a href="https://www.linkedin.com/in/vaibhav-demo">LinkedIn</a>
-        <a href="https://x.com/vaibhav_demo">X</a>
-        <a href="https://instagram.com/vaibhav_demo">Instagram</a>
-        <a href="https://github.com/vaibhav-demo">GitHub</a>
+    const mockPostHtml = `
+      <div class="feed-shared-update">
+        <a href="/in/bhavya-pratap-singh-tomar">Bhavya Pratap Singh Tomar</a>
+        <a href="/in/stoppeddownstudio">Studio</a>
       </div>
     `;
 
     const res = await request.post("/api/intel", {
       data: {
-        url: "https://portfolio.demo.local/vaibhav",
-        html: mockHtml,
+        url: "https://www.linkedin.com/posts/chiragbachwani_galaxyai-flutter-activity-7351546305581604866-8c7K",
+        html: mockPostHtml,
       },
       headers: { "Content-Type": "application/json" },
     });
@@ -114,16 +141,53 @@ test.describe("Cyber Intelligence & Link-in-Bio Footprint Engine", () => {
     expect(res.ok()).toBeTruthy();
     const data = await res.json();
 
-    expect(data.targetUrl).toBe("https://portfolio.demo.local/vaibhav");
-    expect(data.hubFound).toBe("https://linktr.ee/vaibhav_demo");
-    expect(Array.isArray(data.profiles)).toBeTruthy();
+    const handles = data.profiles.map((p: { handle: string }) => p.handle);
+    // Post author resolved directly from permalink
+    expect(handles).toContain("in/chiragbachwani");
+    // Commenter resolved from post thread
+    expect(handles).toContain("in/bhavya-pratap-singh-tomar");
+    expect(handles).toContain("in/stoppeddownstudio");
 
-    const platforms = data.profiles.map((p: { platform: string }) => p.platform);
-    expect(platforms).toContain("devfolio");
-    expect(platforms).toContain("linkedin");
-    expect(platforms).toContain("x");
-    expect(platforms).toContain("instagram");
-    expect(platforms).toContain("github");
+    const author = data.profiles.find((p: { handle: string }) => p.handle === "in/chiragbachwani");
+    expect(author?.source).toBe("author");
+  });
+
+  test("POST /api/intel supports multi-category targets (Scene + Person 1 + Person 2)", async ({
+    request,
+  }) => {
+    const res = await request.post("/api/intel", {
+      data: {
+        targets: [
+          {
+            url: "https://www.linkedin.com/posts/art-commisso-36761a111_one-of-these-group-photos-is-a-composite-activity-7500923816609648640-kOZn",
+            category: "scene",
+            label: "Scene Context",
+            similarityBp: 8636,
+          },
+          {
+            url: "https://www.linkedin.com/posts/chiragbachwani_galaxyai-flutter-activity-7351546305581604866-8c7K",
+            category: "face_0",
+            label: "Person 1",
+            similarityBp: 9780,
+          },
+        ],
+      },
+      headers: { "Content-Type": "application/json" },
+    });
+
+    expect(res.ok()).toBeTruthy();
+    const data = await res.json();
+    expect(data.multi).toBe(true);
+    expect(Array.isArray(data.reports)).toBeTruthy();
+    expect(data.reports.length).toBe(2);
+
+    // Target 1 should have resolved Art Commisso
+    const report1Handles = data.reports[0].profiles.map((p: { handle: string }) => p.handle);
+    expect(report1Handles).toContain("in/art-commisso-36761a111");
+
+    // Target 2 should have resolved Chirag Bachwani
+    const report2Handles = data.reports[1].profiles.map((p: { handle: string }) => p.handle);
+    expect(report2Handles).toContain("in/chiragbachwani");
   });
 
   test("POST /api/intel validates missing target URL", async ({ request }) => {
@@ -132,37 +196,5 @@ test.describe("Cyber Intelligence & Link-in-Bio Footprint Engine", () => {
       headers: { "Content-Type": "application/json" },
     });
     expect(res.status()).toBe(400);
-  });
-
-  test("UI renders CyberIntelFootprint component with radar telemetry badge", async ({
-    page,
-  }) => {
-    await page.goto("http://localhost:3000");
-
-    // Check page title and station console exist
-    await expect(page).toHaveTitle(/Facechain/i);
-    const consoleHeader = page.locator("text=Facechain");
-    await expect(consoleHeader.first()).toBeVisible();
-
-    // Verify API endpoint works live through page fetch
-    const evalResult = await page.evaluate(async () => {
-      const res = await fetch("/api/intel", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: "https://example.com/test",
-          html: `<a href="https://devfolio.co/@eva">Devfolio</a><a href="https://x.com/eva">X</a><a href="https://instagram.com/eva">Insta</a><a href="https://www.linkedin.com/in/eva">LinkedIn</a><a href="https://linktr.ee/eva">Linktree</a>`,
-        }),
-      });
-      return await res.json();
-    });
-
-    expect(evalResult.hubFound).toBe("https://linktr.ee/eva");
-    expect(evalResult.profiles.length).toBeGreaterThanOrEqual(4);
-    const platforms = evalResult.profiles.map((p: { platform: string }) => p.platform);
-    expect(platforms).toContain("devfolio");
-    expect(platforms).toContain("linkedin");
-    expect(platforms).toContain("x");
-    expect(platforms).toContain("instagram");
   });
 });

@@ -2,6 +2,7 @@
  * Cyber Intelligence Page & Bio-Hub Crawler
  *
  * Discovers connected outbound identities published on a face-verified page,
+ * resolves post authors, extracts commenters and tagged profiles from social posts,
  * and follows 1-hop into bio hubs (Linktree, Beacons, Carrd, Bento, Bio.link).
  *
  * Operates strictly off-chain for investigative telemetry and UI aesthetics.
@@ -13,8 +14,19 @@ export type DiscoveredProfile = {
   platformName: string;
   url: string;
   handle: string;
-  source: "page" | "bio-hub";
+  source: "author" | "commenter" | "page" | "bio-hub";
+  roleLabel: string;
   hubUrl?: string;
+  category?: string;
+  categoryLabel?: string;
+};
+
+export type TargetSpecimen = {
+  url: string;
+  category?: string;
+  label?: string;
+  title?: string;
+  similarityBp?: number;
 };
 
 export type IntelReport = {
@@ -63,11 +75,14 @@ const RESERVED_USERNAMES = new Set([
   "privacy", "terms", "blog", "jobs", "careers", "login", "signup", "register",
   "admin", "developer", "api", "docs", "settings", "search", "notifications",
   "in", "posts", "feed", "news", "status", "share", "intent", "p", "reel",
+  "company", "school", "learning", "pub", "pulse",
 ]);
 
-/** Matches raw URLs and href attributes in HTML */
+/** Matches raw URLs, href attributes, and relative profile links in HTML */
 const HREF_REGEX = /href=["'](https?:\/\/[^"'\s>]+)["']/gi;
+const REL_HREF_REGEX = /href=["'](\/(?:in|mwlite\/in)\/[a-zA-Z0-9\-_%]+(?:\?[^"'\s>]*)?)["']/gi;
 const RAW_URL_REGEX = /https?:\/\/[a-zA-Z0-9_\-.]+\.[a-zA-Z]{2,}(?:\/[^\s"'>]*)?/gi;
+const LINKEDIN_URN_REGEX = /urn:li:fsd_profile:([a-zA-Z0-9\-_%]+)/gi;
 
 function normalizeUrl(raw: string): string {
   try {
@@ -82,6 +97,71 @@ function normalizeUrl(raw: string): string {
 
 function isNoise(url: string): boolean {
   return NOISE_PATH_PATTERNS.some((p) => p.test(url));
+}
+
+/**
+ * Extracts post author directly from permalink URL patterns (LinkedIn, X, GitHub)
+ */
+export function extractAuthorFromUrl(targetUrl: string): DiscoveredProfile | null {
+  try {
+    const u = new URL(targetUrl);
+    const host = u.hostname.replace(/^www\./, "").toLowerCase();
+
+    // LinkedIn Post: /posts/{authorSlug}_{titleSlug}-activity-{id} or /posts/{authorSlug}-activity-{id}
+    if (host.includes("linkedin.com")) {
+      const match = u.pathname.match(/\/posts\/([a-zA-Z0-9\-_%]+?)(?:_[^/]*|-activity-\d+)?(?:\/|$)/i);
+      if (match && match[1]) {
+        const slug = match[1];
+        if (!RESERVED_USERNAMES.has(slug.toLowerCase())) {
+          return {
+            platform: "linkedin",
+            platformName: "LinkedIn",
+            url: `https://www.linkedin.com/in/${slug}`,
+            handle: `in/${slug}`,
+            source: "author",
+            roleLabel: "Post Author / Publisher",
+          };
+        }
+      }
+    }
+
+    // X / Twitter Post: /{handle}/status/{id}
+    if (host === "x.com" || host === "twitter.com") {
+      const match = u.pathname.match(/^\/([a-zA-Z0-9_]{1,15})\/status\/\d+/i);
+      if (match && match[1]) {
+        const handle = match[1];
+        if (!RESERVED_USERNAMES.has(handle.toLowerCase())) {
+          return {
+            platform: "x",
+            platformName: "X (Twitter)",
+            url: `https://x.com/${handle}`,
+            handle: `@${handle}`,
+            source: "author",
+            roleLabel: "Post Author",
+          };
+        }
+      }
+    }
+
+    // GitHub Repo / Issue / Profile: /{user}/{repo}
+    if (host === "github.com") {
+      const parts = u.pathname.split("/").filter(Boolean);
+      if (parts.length > 0 && !RESERVED_USERNAMES.has(parts[0].toLowerCase())) {
+        return {
+          platform: "github",
+          platformName: "GitHub",
+          url: `https://github.com/${parts[0]}`,
+          handle: `@${parts[0]}`,
+          source: "author",
+          roleLabel: "Repository Owner",
+        };
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export function classifySocialUrl(urlStr: string): {
@@ -113,8 +193,8 @@ export function classifySocialUrl(urlStr: string): {
       }
     }
 
-    // LinkedIn: linkedin.com/in/username
-    if (host === "linkedin.com") {
+    // LinkedIn: linkedin.com/in/username or any regional in.linkedin.com / ca.linkedin.com
+    if (host === "linkedin.com" || host.endsWith(".linkedin.com")) {
       if (parts[0] === "in" && parts[1]) {
         const handle = parts[1];
         if (!RESERVED_USERNAMES.has(handle.toLowerCase())) {
@@ -191,17 +271,37 @@ export function extractBioHubUrl(html: string): string | null {
 export function parseLinksFromHtml(
   html: string,
   source: "page" | "bio-hub",
-  hubUrl?: string
+  hubUrl?: string,
+  isSocialPostPage = false,
+  authorHandle?: string
 ): DiscoveredProfile[] {
   const seenUrls = new Set<string>();
   const profiles: DiscoveredProfile[] = [];
 
   const candidates: string[] = [];
+
+  // 1. Standard absolute hrefs
   for (const m of html.matchAll(HREF_REGEX)) {
     if (m[1]) candidates.push(m[1]);
   }
+
+  // 2. Relative LinkedIn hrefs like href="/in/bhavya-pratap-singh-tomar"
+  for (const m of html.matchAll(REL_HREF_REGEX)) {
+    if (m[1]) {
+      candidates.push(`https://www.linkedin.com${m[1]}`);
+    }
+  }
+
+  // 3. Raw URLs in page scripts / JSON-LD / text
   for (const m of html.matchAll(RAW_URL_REGEX)) {
     candidates.push(m[0]);
+  }
+
+  // 4. LinkedIn Urns like urn:li:fsd_profile:bhavya-pratap-singh-tomar
+  for (const m of html.matchAll(LINKEDIN_URN_REGEX)) {
+    if (m[1] && !RESERVED_USERNAMES.has(m[1].toLowerCase())) {
+      candidates.push(`https://www.linkedin.com/in/${m[1]}`);
+    }
   }
 
   for (const raw of candidates) {
@@ -211,12 +311,27 @@ export function parseLinksFromHtml(
     const classified = classifySocialUrl(norm);
     if (classified) {
       seenUrls.add(norm);
+
+      let profileSource: DiscoveredProfile["source"] = source;
+      let roleLabel = source === "bio-hub" ? "via Bio-Hub (Linktree)" : "Page Outbound Claim";
+
+      if (isSocialPostPage) {
+        if (authorHandle && classified.handle.toLowerCase().includes(authorHandle.toLowerCase())) {
+          profileSource = "author";
+          roleLabel = "Post Author / Publisher";
+        } else if (classified.platform === "linkedin") {
+          profileSource = "commenter";
+          roleLabel = "Commenter / Tagged Subject";
+        }
+      }
+
       profiles.push({
         platform: classified.platform,
         platformName: classified.platformName,
         url: norm,
         handle: classified.handle,
-        source,
+        source: profileSource,
+        roleLabel,
         hubUrl,
       });
     }
@@ -226,7 +341,7 @@ export function parseLinksFromHtml(
 }
 
 /** Fetch page HTML with timeout and desktop user-agent */
-async function fetchHtml(targetUrl: string, timeoutMs = 6000): Promise<string> {
+async function fetchHtml(targetUrl: string, timeoutMs = 7000): Promise<string> {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -250,29 +365,61 @@ async function fetchHtml(targetUrl: string, timeoutMs = 6000): Promise<string> {
 
 /**
  * Executes a full cyber intelligence sweep for a target URL:
- * 1. Crawls target page HTML for direct social links (Devfolio, GitHub, etc.)
- * 2. Detects bio hubs (Linktree, Beacons, Carrd)
- * 3. Crawls bio hub 1-hop and pulls underlying linked identities
+ * 1. Resolves post author directly from target permalink (LinkedIn, X, etc.)
+ * 2. Crawls target page HTML for direct social links, commenters, and tagged profiles
+ * 3. Detects bio hubs (Linktree, Beacons, Carrd)
+ * 4. Crawls bio hub 1-hop and pulls underlying linked identities
  */
-export async function crawlConnectedIdentities(targetUrl: string): Promise<IntelReport> {
+export async function crawlConnectedIdentities(
+  targetUrl: string,
+  category?: string,
+  categoryLabel?: string
+): Promise<IntelReport> {
   const start = Date.now();
-  const directHtml = await fetchHtml(targetUrl, 6000);
-
   const seenUrls = new Set<string>();
   const profiles: DiscoveredProfile[] = [];
 
-  // 1. Direct page profiles
+  // 1. Author directly from target URL
+  const directAuthor = extractAuthorFromUrl(targetUrl);
+  if (directAuthor) {
+    seenUrls.add(normalizeUrl(directAuthor.url));
+    profiles.push({
+      ...directAuthor,
+      category,
+      categoryLabel,
+    });
+  }
+
+  const isSocialPost = targetUrl.includes("linkedin.com/posts") ||
+    targetUrl.includes("x.com/") ||
+    targetUrl.includes("twitter.com/") ||
+    targetUrl.includes("instagram.com/p/");
+
+  const authorHandle = directAuthor?.handle.replace(/^in\/|^@/, "");
+
+  // 2. Direct page profiles & commenters
+  const directHtml = await fetchHtml(targetUrl, 7000);
   if (directHtml) {
-    const directProfiles = parseLinksFromHtml(directHtml, "page");
+    const directProfiles = parseLinksFromHtml(
+      directHtml,
+      "page",
+      undefined,
+      isSocialPost,
+      authorHandle
+    );
     for (const p of directProfiles) {
       if (!seenUrls.has(p.url)) {
         seenUrls.add(p.url);
-        profiles.push(p);
+        profiles.push({
+          ...p,
+          category,
+          categoryLabel,
+        });
       }
     }
   }
 
-  // 2. Check if the target page itself IS a bio hub
+  // 3. Check if target URL itself is a bio hub
   let hubUrl: string | null = null;
   try {
     const u = new URL(targetUrl);
@@ -282,20 +429,24 @@ export async function crawlConnectedIdentities(targetUrl: string): Promise<Intel
     }
   } catch {}
 
-  // 3. Or if direct HTML contains a link to a bio hub
+  // 4. Or if direct HTML contains a link to a bio hub
   if (!hubUrl && directHtml) {
     hubUrl = extractBioHubUrl(directHtml);
   }
 
-  // 4. Follow 1-hop into bio hub if discovered and not already crawled
+  // 5. Follow 1-hop into bio hub if discovered and not already crawled
   if (hubUrl && hubUrl !== normalizeUrl(targetUrl)) {
-    const hubHtml = await fetchHtml(hubUrl, 6000);
+    const hubHtml = await fetchHtml(hubUrl, 7000);
     if (hubHtml) {
       const hubProfiles = parseLinksFromHtml(hubHtml, "bio-hub", hubUrl);
       for (const p of hubProfiles) {
         if (!seenUrls.has(p.url)) {
           seenUrls.add(p.url);
-          profiles.push(p);
+          profiles.push({
+            ...p,
+            category,
+            categoryLabel,
+          });
         }
       }
     }
@@ -308,4 +459,25 @@ export async function crawlConnectedIdentities(targetUrl: string): Promise<Intel
     scannedAt: new Date().toISOString(),
     elapsedMs: Date.now() - start,
   };
+}
+
+/**
+ * Concurrently crawls the top candidate target for each detected person / category
+ */
+export async function crawlMultiCategoryIdentities(
+  targets: TargetSpecimen[]
+): Promise<IntelReport[]> {
+  const tasks = targets.map((t) =>
+    crawlConnectedIdentities(t.url, t.category, t.label)
+  );
+  const settled = await Promise.allSettled(tasks);
+  const reports: IntelReport[] = [];
+
+  for (const res of settled) {
+    if (res.status === "fulfilled") {
+      reports.push(res.value);
+    }
+  }
+
+  return reports;
 }
