@@ -190,6 +190,107 @@ test.describe("Cyber Intelligence & Link-in-Bio Footprint Engine", () => {
     expect(report2Handles).toContain("in/chiragbachwani");
   });
 
+  test("classifySocialUrl strictly drops internal YouTube asset traffic and resolves valid video URLs", () => {
+    // Internal asset paths must return null (never create junk outbound traffic)
+    expect(classifySocialUrl("https://www.youtube.com/s/desktop/f82dea74/img/favicon.ico")).toBeNull();
+    expect(classifySocialUrl("https://www.youtube.com/s/_/ytmainappweb/_/js/k=ytmainappweb")).toBeNull();
+    expect(classifySocialUrl("https://www.youtube.com/opensearch")).toBeNull();
+    expect(classifySocialUrl("https://www.youtube.com/oembed")).toBeNull();
+    expect(classifySocialUrl("https://www.youtube.com/creators")).toBeNull();
+    expect(classifySocialUrl("https://www.youtube.com/ads")).toBeNull();
+    expect(classifySocialUrl("https://www.youtube.com/howyoutubeworks")).toBeNull();
+    expect(classifySocialUrl("https://www.youtube.com/error_204")).toBeNull();
+    expect(classifySocialUrl("https://www.youtube.com/csi_204")).toBeNull();
+    expect(classifySocialUrl("https://www.youtube.com/ptracking")).toBeNull();
+
+    // Valid creator channel
+    const channel = classifySocialUrl("https://www.youtube.com/@USCMooreSchool");
+    expect(channel).not.toBeNull();
+    expect(channel?.platform).toBe("youtube");
+    expect(channel?.handle).toBe("@USCMooreSchool");
+    expect(channel?.canonicalUrl).toBe("https://www.youtube.com/@USCMooreSchool");
+
+    // Valid video link
+    const video = classifySocialUrl("https://www.youtube.com/watch?v=4AKtwrmV37I");
+    expect(video).not.toBeNull();
+    expect(video?.platform).toBe("youtube");
+    expect(video?.platformName).toBe("YouTube Video");
+    expect(video?.canonicalUrl).toBe("https://www.youtube.com/watch?v=4AKtwrmV37I");
+
+    // Short video link (youtu.be)
+    const shortVid = classifySocialUrl("https://youtu.be/4AKtwrmV37I");
+    expect(shortVid).not.toBeNull();
+    expect(shortVid?.platform).toBe("youtube");
+    expect(shortVid?.canonicalUrl).toBe("https://www.youtube.com/watch?v=4AKtwrmV37I");
+  });
+
+  test("parseLinksFromHtml extracts JSON-escaped LinkedIn profile URLs from comments", () => {
+    const jsonHydratedHtml = `
+      <script type="application/ld+json">
+        {"@context":"http://schema.org","@type":"Comment","author":{"url":"\\/in\\/bhavya-pratap-singh-tomar"}}
+      </script>
+      <div data-payload='{"profileUrl":"/in/jason-costa-6bab0590"}'></div>
+    `;
+
+    const profiles = parseLinksFromHtml(jsonHydratedHtml, "page", undefined, true, "art-commisso");
+    const handles = profiles.map((p) => p.handle);
+    expect(handles).toContain("in/bhavya-pratap-singh-tomar");
+    expect(handles).toContain("in/jason-costa-6bab0590");
+  });
+
+  test("POST /api/intel supports 4-way group sweep (Scene + Person 1 + Person 2 + Person 3)", async ({
+    request,
+  }) => {
+    const res = await request.post("/api/intel", {
+      data: {
+        targets: [
+          {
+            url: "https://www.linkedin.com/posts/art-commisso-36761a111_one-of-these-group-photos-is-a-composite-activity-7500923816609648640-kOZn",
+            category: "scene",
+            label: "Scene Context",
+            similarityBp: 8636,
+          },
+          {
+            url: "https://uk.linkedin.com/in/henry-knight-1b",
+            category: "face_0",
+            label: "Person 1",
+            similarityBp: 5450,
+          },
+          {
+            url: "https://www.youtube.com/watch?v=4AKtwrmV37I",
+            category: "face_1",
+            label: "Person 2",
+            similarityBp: 5200,
+          },
+          {
+            url: "https://www.linkedin.com/in/jason-costa-6bab0590",
+            category: "face_2",
+            label: "Person 3",
+            similarityBp: 4900,
+          },
+        ],
+      },
+      headers: { "Content-Type": "application/json" },
+    });
+
+    expect(res.ok()).toBeTruthy();
+    const data = await res.json();
+    expect(data.multi).toBe(true);
+    expect(data.reports.length).toBe(4);
+
+    // Person 1 should resolve Henry Knight as Target Profile Subject
+    const p1Report = data.reports[1];
+    expect(p1Report.profiles.some((p: { handle: string; source: string }) => p.handle.includes("henry-knight") && p.source === "subject")).toBe(true);
+
+    // Person 2 should resolve YouTube Video as Video Source Match and channel
+    const p2Report = data.reports[2];
+    expect(p2Report.profiles.some((p: { platform: string; source: string }) => p.platform === "youtube" && p.source === "subject")).toBe(true);
+
+    // Person 3 should resolve Jason Costa
+    const p3Report = data.reports[3];
+    expect(p3Report.profiles.some((p: { handle: string }) => p.handle.includes("jason-costa"))).toBe(true);
+  });
+
   test("POST /api/intel validates missing target URL", async ({ request }) => {
     const res = await request.post("/api/intel", {
       data: {},

@@ -519,28 +519,54 @@ export function Docket() {
     const targets: Array<{ url: string; category?: string; label?: string; title?: string; similarityBp?: number }> = [];
     const seenUrls = new Set<string>();
 
+    const formatCategoryLabel = (cat: string, existingLabel?: string) => {
+      if (existingLabel && existingLabel !== cat) return existingLabel;
+      if (cat === "scene") return "Scene Context";
+      const m = cat.match(/^face_(\d+)$/);
+      if (m) return `Person ${parseInt(m[1], 10) + 1}`;
+      return cat;
+    };
+
     seenUrls.add(best.url);
     targets.push({
       url: best.url,
       category: best.probeCategory || "scene",
-      label: best.probeLabel || (best.probeCategory === "scene" ? "Scene Context" : "Person 1"),
+      label: formatCategoryLabel(best.probeCategory || "scene", best.probeLabel),
       title: best.title,
       similarityBp: best.similarityBp ?? undefined,
     });
 
-    // Add top lead for each distinct category / person
-    const categories = Array.from(new Set(candidates.map((c) => c.probeCategory || "scene")));
+    // Add top lead for each detected category / person in group
+    const categorySet = new Set<string>();
+    categorySet.add("scene");
+    if (probe?.allReadings) {
+      probe.allReadings.forEach((_, idx) => categorySet.add(`face_${idx}`));
+    }
+    for (const c of candidates) {
+      categorySet.add(c.probeCategory || "scene");
+    }
+
+    const categories = Array.from(categorySet).sort((a, b) => {
+      if (a === "scene") return -1;
+      if (b === "scene") return 1;
+      const numA = Number(a.match(/\d+/)?.[0] ?? 999);
+      const numB = Number(b.match(/\d+/)?.[0] ?? 999);
+      return numA - numB || a.localeCompare(b);
+    });
+
     for (const cat of categories) {
-      const topInCat = candidates
-        .filter((c) => (c.probeCategory || "scene") === cat && c.similarityBp !== null)
-        .sort((a, b) => (b.similarityBp ?? 0) - (a.similarityBp ?? 0))[0];
+      const topInCat =
+        candidates
+          .filter((c) => (c.probeCategory || "scene") === cat && c.similarityBp !== null)
+          .sort((a, b) => (b.similarityBp ?? 0) - (a.similarityBp ?? 0))[0] ||
+        candidates.find((c) => (c.probeCategory || "scene") === cat && c.url);
 
       if (topInCat && topInCat.url && !seenUrls.has(topInCat.url)) {
         seenUrls.add(topInCat.url);
         targets.push({
           url: topInCat.url,
           category: cat,
-          label: topInCat.probeLabel || (cat === "scene" ? "Scene Context" : cat),
+          label: formatCategoryLabel(cat, topInCat.probeLabel),
           title: topInCat.title,
           similarityBp: topInCat.similarityBp ?? undefined,
         });
@@ -548,7 +574,7 @@ export function Docket() {
     }
 
     return targets;
-  }, [best, candidates]);
+  }, [best, candidates, probe]);
 
   return (
     <>
