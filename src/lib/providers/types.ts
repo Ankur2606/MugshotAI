@@ -10,6 +10,16 @@ export type Candidate = {
   source: string;
   /** provider's own ranking confidence, basis points, if it reports one */
   providerScoreBp?: number;
+  /** Which probe surfaced this candidate: "scene" | "face_0" | "osint", etc. */
+  probeCategory?: string;
+  probeLabel?: string;
+};
+
+export type ProbeBox = {
+  id: string;
+  label: string;
+  box?: [number, number, number, number]; // [x, y, w, h] in image pixel space
+  boxRaw?: [number, number, number, number]; // [x, y, w, h] normalized 0..1
 };
 
 export type SearchOutcome = {
@@ -24,7 +34,11 @@ export interface SearchProvider {
   readonly label: string;
   /** true when the required credentials are present */
   configured(): boolean;
-  search(image: Uint8Array, mime: string): Promise<SearchOutcome>;
+  search(
+    image: Uint8Array,
+    mime: string,
+    probes?: ProbeBox[],
+  ): Promise<SearchOutcome>;
 }
 
 /** Hosts we treat as social platforms when ranking candidates. */
