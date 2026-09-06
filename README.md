@@ -42,17 +42,27 @@ The entire pipeline executes on a single interactive cyber-industrial console:
   - **Anti-Spoof & Liveness**: Dual classification heads verify genuine 3D human presence.
 - **Flip Test-Time Augmentation (TTA)**: Probe capture averages the descriptor of the original frame with its horizontally mirrored image (`readFaceStable()`), cancelling out lighting and head-pose asymmetry (standard practice from ArcFace literature).
 
-### Station II — Trace (Server Route)
-- The probe JPEG is sent to the `/api/search` route, which delegates to an extensible provider adapter (`src/lib/providers/`).
-- **Default Backend**: Google Lens via SerpApi (`SerpApiLens`). Handles binary upload and extracts live search leads, sorting recognized social platforms (Instagram, X, LinkedIn, Reddit, YouTube, TikTok) to the top of the queue.
-- **Alternative Backend**: [FaceCheck.ID](https://facecheck.id/) (`FaceCheckId`) is supported out-of-the-box for paid, true facial-embedding search.
+### Station II — Trace (Server Route & Multi-Probe Aggregator)
+- The probe is dispatched to `/api/search`, delegating to our multi-engine architecture (`MultiEngineAggregator`).
+- **Dual-Path Strategy (Scene Context + Person Crops)**:
+  - Dispatches full contextual scene query alongside individual localized face crops for each detected person in group scenes.
+  - Mitigates visual search engine bias towards clothing and apparel by querying both holistic context and tight biometric crops in parallel.
+- **Social Media Prioritization**: Search results partition and prioritize social platforms (Instagram, LinkedIn, X/Twitter, Reddit, YouTube, GitHub, TikTok) ahead of generic shopping and e-commerce listings.
 - **Guiding Principle**: The search backend only *proposes* candidate leads; it is never permitted to declare a match.
 
-### Station III — Adjudication (Browser Client)
+### Station III — Adjudication & Cyber Intelligence (Browser Client)
 - **Authoritative Server Proxy**: Each candidate image is fetched through `/api/proxy`. The proxy evades CDN hotlinking via fallback Referer headers, prevents browser canvas taint (CORS), streams image bytes, and computes an authoritative `SHA-256` hash.
 - **Identical Basis Re-Encoding**: Candidate images are decoded into HTML5 Image objects in the browser and re-encoded using the **exact same model instance** that encoded the specimen.
 - **Quality Gating**: Low-resolution crops (<48 px) and uncertain detections are skipped with transparent reasons to prevent false matches from centroid drift.
 - **Cosine Similarity in Basis Points**: Cosine similarity is computed and scaled to integer basis points (0–10000). The default threshold of **54.00% (5400 bp)** was empirically calibrated using the `/selftest` portrait suite.
+- **Discovered Evidence 3D Carousel**: An interactive horizontal carousel interleaving the top matching candidates across each detected probe category (Scene Context, Person 1, Person 2, Person 3) to ensure fair multi-person visibility before long-tail results.
+- **Cyber Intelligence // Deep Identity & Bio-Hub Radar**:
+  - **Dual-Algorithm Social Crawler**:
+    - *Algo 1 (Social Posts)*: Resolves post author directly from permalinks (`/posts/{slug}` $\rightarrow$ `in/{slug}`), normalizes regional subdomains, extracts commenters & tagged profiles (`bhavya-pratap-singh-tomar`, `jason-costa-6bab0590`, `natasha-giuffre`), and follows outbound claims.
+    - *Algo 2 (Direct Profiles & Videos)*: Resolves target profile subjects (`Henry Knight`, `Jason Costa`), extracts valid video sources (clean YouTube video permalinks and creator channels like `@USCMooreSchool`), and strictly suppresses internal asset noise.
+    - *Recursive 1-Hop Bio-Hubs*: Follows Linktree, Beacons, Bento, and Devfolio links 1-hop deep to reconstruct connected cross-platform portfolios.
+  - **Group Photo Category Filters**: Toggle between `All Leads`, `Scene Context`, `Person 1`, `Person 2`, and `Person 3`.
+  - **Strict Cryptographic Perimeter**: Intelligence leads run strictly off-chain as investigative UI telemetry; raw crawled links never alter the canonical on-chain evidence bundle or Keccak-256 seal.
 
 ### Station IV — Seal & Verify (Server + Blockchain)
 - **Canonical Evidence Bundle**: The winning match is assembled into an idempotent JSON structure (`v: 1`, probe image SHA-256, quantized descriptor SHA-256, match URL, match image SHA-256, similarity bp, encoder tag, provider tag).
@@ -188,25 +198,33 @@ facechain/
 ├── scripts/
 │   ├── verify-chain.mjs     # API integration verification test
 │   └── verify-direct-chain.mjs # Direct on-chain JSON-RPC verification script
+├── tests/
+│   ├── cyber-intel.spec.ts  # Playwright suite for crawler, author extraction, and bio-hubs
+│   ├── api-search-status.spec.ts # Search provider & status API test suite
+│   └── e2e-console.spec.ts  # Full console station integration test suite
 └── src/
     ├── app/
     │   ├── api/
     │   │   ├── anchor/      # Keccak-256 hashing and on-chain anchoring
+    │   │   ├── intel/       # Deep cyber intelligence & bio-hub 1-hop crawler
     │   │   ├── proxy/       # CORS bypass, byte streaming, and SHA-256
-    │   │   ├── search/      # Live web & social media search dispatch
+    │   │   ├── search/      # Multi-probe web & social media search dispatch
     │   │   ├── status/      # Real-time chain and provider telemetry
     │   │   └── verify/      # Canonical re-hashing and on-chain lookup
     │   ├── page.tsx         # Client-only entry point
     │   └── selftest/        # Offline diagnostic page
     ├── components/
     │   ├── Docket.tsx       # Main 4-station reactive console
+    │   ├── CandidateCarousel.tsx # 3D Discovered Evidence horizontal carousel
+    │   ├── CyberIntelFootprint.tsx # Deep identity, author, commenter & bio-hub radar
     │   ├── Specimen.tsx     # Webcam capture, landmark overlay, and TTA
     │   └── ...              # UI primitives (ThresholdDial, HashStrip, etc.)
     └── lib/
         ├── canonical.ts     # Canonical JSON, Keccak-256, Cosine Similarity
         ├── chain.ts         # Viem clients and multi-chain configuration
         ├── human-client.ts  # Browser ML runtime singleton (@vladmandic/human)
-        └── providers/       # Search backend adapter (Google Lens, FaceCheck)
+        ├── page-crawler.ts  # Author resolution, commenter parser, and 1-hop bio-hub crawler
+        └── providers/       # Search backend adapter (Google Lens, MultiEngineAggregator)
 ```
 
 ---
@@ -231,4 +249,4 @@ facechain/
 
 ## License
 
-MIT License. Developed for Cracked Devs.
+MIT License. Developed for Cracked Devs
