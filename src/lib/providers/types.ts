@@ -10,7 +10,7 @@ export type Candidate = {
   source: string;
   /** provider's own ranking confidence, basis points, if it reports one */
   providerScoreBp?: number;
-  /** Which probe surfaced this candidate: "scene" | "face_0" | "osint", etc. */
+  /** Which probe surfaced this candidate: "scene" | "face_0" | "face_1", etc. */
   probeCategory?: string;
   probeLabel?: string;
 };

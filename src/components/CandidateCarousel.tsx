@@ -96,7 +96,7 @@ export function CandidateCarousel({
               {/* Category Banner */}
               <div className="flex items-center justify-between border-b border-rule/70 px-3 py-1.5 bg-black/40">
                 <span className="font-mono text-[9px] uppercase tracking-wider text-dim truncate max-w-[150px]">
-                  {c.probeLabel || (c.probeCategory === "osint" ? "Sherlock OSINT" : "Scene Match")}
+                  {c.probeLabel || "Scene Match"}
                 </span>
                 <span className="font-mono text-[9px] uppercase tracking-wider text-bone font-medium">
                   {c.source}

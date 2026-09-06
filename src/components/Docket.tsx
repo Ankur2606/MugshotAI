@@ -541,11 +541,9 @@ export function Docket() {
                   match?.probeLabel ||
                   (facet === "scene"
                     ? "Scene Context"
-                    : facet === "osint"
-                      ? "Sherlock OSINT"
-                      : facet.startsWith("face_")
-                        ? `Person ${parseInt(facet.replace("face_", ""), 10) + 1}`
-                        : facet);
+                    : facet.startsWith("face_")
+                      ? `Person ${parseInt(facet.replace("face_", ""), 10) + 1}`
+                      : facet);
                 return (
                   <button
                     key={facet}
@@ -1213,11 +1211,9 @@ function CandidateRow({
               }`}
             >
               {c.probeLabel ||
-                (c.probeCategory === "osint"
-                  ? "Sherlock OSINT"
-                  : c.probeCategory?.startsWith("face_")
-                    ? `Person ${parseInt(c.probeCategory.replace("face_", ""), 10) + 1}`
-                    : "Scene Context")}
+                (c.probeCategory?.startsWith("face_")
+                  ? `Person ${parseInt(c.probeCategory.replace("face_", ""), 10) + 1}`
+                  : "Scene Context")}
             </span>
           </div>
 
