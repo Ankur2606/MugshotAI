@@ -129,10 +129,11 @@ Model weights (~13 MB) are served from `public/models/`. On first visit, the bro
 - **Lazy Singleton**: A single instance of `@vladmandic/human` is instantiated and shared across the entire user session, eliminating memory leaks.
 
 ### 3.2 Detection, Mesh & 1024-d Descriptor Pipeline
-1. **BlazeFace Detector**: Configured with rotation compensation (`rotation: true`) and single-face focus (`maxDetected: 1`).
+1. **BlazeFace Detector**: Configured with rotation compensation (`rotation: true`) and multi-person support (`maxDetected: 8`) — up to 8 faces detected and encoded per image.
 2. **FaceMesh**: Evaluates 468 3D landmarks for real-time mesh rendering and calculates 3D iris orientation.
 3. **FaceRes Feature Extractor**: Generates a **1024-dimensional normalized float embedding vector**.
 4. **Anti-Spoof & Liveness**: Dual neural network heads produce confidence scores (`real: 0..1`, `live: 0..1`) to prevent static photograph replay attacks.
+5. **Multi-Face UI**: `readAllFaces()` returns all detected faces sorted by confidence. The Specimen station shows "N Faces Discovered" with individual `Person 1 (92%)` / `Person 2 (87%)` selector buttons plus an "All Faces + Scene (Dual-Path)" option.
 
 ### 3.3 Flip Test-Time Augmentation (TTA)
 In `readFaceStable()`:
@@ -153,19 +154,70 @@ export interface SearchProvider {
   readonly id: string;
   readonly label: string;
   configured(): boolean;
-  search(image: Uint8Array, mime: string): Promise<SearchOutcome>;
+  search(image: Uint8Array, mime: string, probes?: ProbeBox[]): Promise<SearchOutcome>;
 }
 ```
 
-The registry in `index.ts` dynamically resolves the provider specified by `SEARCH_PROVIDER`:
-- **`SerpApiLens` (Default)**: Sends the probe image to `serpapi.com/image` to obtain an `image_id`, then queries Google Lens (`engine=google_lens`). A fallback retry queries `type=visual_matches` if the primary payload is sparse.
-- **`FaceCheckId`**: True facial-recognition search against public social records. Operates asynchronously via `upload_pic` and polls `search` until results materialize.
+`ProbeBox` carries `boxRaw` — the normalized (0..1) face bounding box from the neural detector. The aggregator uses `boxRaw` scaled by actual image dimensions to crop individual face regions via `sharp`, sending each person's face crop as a separate visual search query.
 
-### 4.2 Social Media Host Prioritization
+The registry in `index.ts` dynamically resolves the provider specified by `SEARCH_PROVIDER`:
+- **`MultiEngineAggregator` (Default)**: Orchestrates all four search paths concurrently.
+- **`SerpApiLens`**: Sends the probe image to `serpapi.com/image` to obtain an `image_id`, then queries Google Lens (`engine=google_lens`).
+- **`SerpApiYandex`**: Queries Yandex Images reverse search via SerpApi.
+
+### 4.2 Quad-Path Aggregator Architecture
+
+`src/lib/providers/aggregator.ts` — `MultiEngineAggregator`:
+
+**Path A — Scene Context (Priority 1)**
+- Sends the full probe image to both Google Lens and Yandex Images
+- Captures global scene, setting, background, and all persons collectively
+- Returns `probeCategory: "scene"`
+
+**Path B — Per-Person Neural Face Crops (Priority 2)**
+- For each face detected by `readAllFaces()` (up to 8):
+  - Extracts face crop using `boxRaw` normalized coordinates × image dimensions
+  - Applies 15% natural padding (no hardcoded multipliers)
+  - Sends crop to Yandex + Lens concurrently
+  - Returns `probeCategory: "face_0"`, `"face_1"`, `"face_2"` etc.
+- Operator sees filter tabs: `Person 1 | Person 2 | Person 3`
+
+**Path C — Sherlock OSINT (Priority 3)**
+- Extracts `@username` handles from visual result URLs and page titles
+- Runs pure TypeScript Sherlock engine (414 platforms, `sherlock-sites.json`)
+- Hard 12-second budget via `Promise.race([sherlockWork, 12s_timeout])`
+- Avatar mapping: GitHub Avatars API, unavatar.io for social platforms
+- Returns `probeCategory: "osint"`
+
+**E-Commerce Filter**
+- Removes clothing/product pages (Zara, ASOS, H&M, SHEIN, `/products/`, `/shop/`)
+- Applied to all paths except social platform hosts
+
+**Assembly Order**
+```
+Scene[:12] → Person 1[:4] → Person 2[:4] → Person 3[:4] → OSINT[:4] → fill remaining
+```
+Total cap: 28 candidates returned to client.
+
+### 4.3 TypeScript Sherlock Engine
+
+`src/lib/sherlock-engine.ts` — a faithful port of `sherlock-project/sherlock`:
+
+- Reads `src/lib/sherlock-sites.json` (414 site definitions, same file as the Python package)
+- Implements all three Sherlock detection modes:
+  - `status_code`: found if HTTP response is 2xx
+  - `message`: found if response body does NOT contain `errorMsg`
+  - `response_url`: found if redirect destination is not `errorUrl`
+- Runs in batches of 40 concurrent `fetch()` calls, 4s timeout per site
+- Priority-first: social/profile platforms probed before niche sites
+- NSFW sites skipped by default
+- **Vercel-compatible**: zero Python, zero child processes, pure Web Fetch API
+
+### 4.4 Social Media Host Prioritization
 Candidates are parsed using `hostOf(url)` and matched against `SOCIAL_HOSTS`:
 `instagram.com`, `x.com`, `twitter.com`, `facebook.com`, `linkedin.com`, `tiktok.com`, `youtube.com`, `reddit.com`, `threads.net`, `pinterest.com`, `github.com`, etc.
 
-Social hits are sorted to the front of the candidate queue, capped at 24 candidates, and returned alongside the probe's authoritative SHA-256 hash.
+Social hits are sorted to the front of each bucket. Total candidate cap: 28.
 
 ---
 
