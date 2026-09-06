@@ -1,5 +1,6 @@
 import type { Candidate, SearchOutcome, SearchProvider } from "./types";
 import { hostOf, isSocial } from "./types";
+import sharp from "sharp";
 
 /**
  * Yandex Images reverse search through SerpApi.
@@ -23,13 +24,21 @@ export class SerpApiYandex implements SearchProvider {
   }
 
   private async uploadImage(image: Uint8Array, mime: string): Promise<string> {
-    if (image.byteLength > 500_000) {
-      throw new Error(
-        `Probe image is ${Math.round(image.byteLength / 1024)} KB; SerpApi accepts at most 500 KB.`,
-      );
+    let payload = image;
+    let payloadMime = mime;
+    if (payload.byteLength > 480_000) {
+      try {
+        const compressed = await sharp(image)
+          .resize({ width: 1024, withoutEnlargement: true })
+          .jpeg({ quality: 80 })
+          .toBuffer();
+        payload = new Uint8Array(compressed);
+        payloadMime = "image/jpeg";
+      } catch {}
     }
+
     const form = new FormData();
-    form.append("image", new Blob([image as BlobPart], { type: mime }), "probe.jpg");
+    form.append("image", new Blob([payload as BlobPart], { type: payloadMime }), "probe.jpg");
     form.append("api_key", this.key);
 
     const res = await fetch("https://serpapi.com/image", { method: "POST", body: form });
