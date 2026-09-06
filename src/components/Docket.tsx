@@ -514,6 +514,42 @@ export function Docket() {
     return ordered;
   }, [activeFacet, candidates, filteredCandidates]);
 
+  const intelTargets = useMemo(() => {
+    if (!best?.url) return [];
+    const targets: Array<{ url: string; category?: string; label?: string; title?: string; similarityBp?: number }> = [];
+    const seenUrls = new Set<string>();
+
+    seenUrls.add(best.url);
+    targets.push({
+      url: best.url,
+      category: best.probeCategory || "scene",
+      label: best.probeLabel || (best.probeCategory === "scene" ? "Scene Context" : "Person 1"),
+      title: best.title,
+      similarityBp: best.similarityBp ?? undefined,
+    });
+
+    // Add top lead for each distinct category / person
+    const categories = Array.from(new Set(candidates.map((c) => c.probeCategory || "scene")));
+    for (const cat of categories) {
+      const topInCat = candidates
+        .filter((c) => (c.probeCategory || "scene") === cat && c.similarityBp !== null)
+        .sort((a, b) => (b.similarityBp ?? 0) - (a.similarityBp ?? 0))[0];
+
+      if (topInCat && topInCat.url && !seenUrls.has(topInCat.url)) {
+        seenUrls.add(topInCat.url);
+        targets.push({
+          url: topInCat.url,
+          category: cat,
+          label: topInCat.probeLabel || (cat === "scene" ? "Scene Context" : cat),
+          title: topInCat.title,
+          similarityBp: topInCat.similarityBp ?? undefined,
+        });
+      }
+    }
+
+    return targets;
+  }, [best, candidates]);
+
   return (
     <>
       <GateIntro />
@@ -701,7 +737,7 @@ export function Docket() {
               </div>
 
               {/* Cyber Intelligence Outbound Footprint Radar */}
-              <CyberIntelFootprint targetUrl={best.url} />
+              <CyberIntelFootprint primaryUrl={best.url} targets={intelTargets} />
             </>
           )}
 
