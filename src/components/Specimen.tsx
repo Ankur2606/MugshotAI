@@ -60,9 +60,9 @@ export function Specimen({
       const url = URL.createObjectURL(croppedBlob);
       const img = new Image();
       img.src = url;
-      await img.decode().catch(() => {});
+      await img.decode().catch(() => { });
       const allReadings = await readAllFaces(img);
-      const reading = (await readFaceStable(img)) || allReadings[0];
+      const reading = allReadings[0];
       if (!reading) {
         setNote("No face detected in the cropped region. Try a broader crop.");
         return;
@@ -71,7 +71,7 @@ export function Specimen({
         blob: croppedBlob,
         previewUrl: url,
         reading,
-        allReadings: allReadings.length > 0 ? allReadings : [reading],
+        allReadings,
         selectedFaceIndex: "all",
         capturedAt: Math.floor(Date.now() / 1000),
         origin: "file",
@@ -204,7 +204,7 @@ export function Specimen({
         setNote("That file could not be read as an image.");
       });
       const allReadings = await readAllFaces(img);
-      const reading = (await readFaceStable(img)) || allReadings[0];
+      const reading = allReadings[0];
       if (!reading) {
         setNote("No face found in that image. Try a clearer, front-facing photo.");
         return;
@@ -214,7 +214,7 @@ export function Specimen({
         blob,
         previewUrl: URL.createObjectURL(blob),
         reading,
-        allReadings: allReadings.length > 0 ? allReadings : [reading],
+        allReadings,
         selectedFaceIndex: "all",
         capturedAt: Math.floor(Date.now() / 1000),
         origin: "file",
@@ -341,11 +341,10 @@ export function Specimen({
                     reading: probe.allReadings![0],
                   });
                 }}
-                className={`px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider border transition-colors ${
-                  probe.selectedFaceIndex === "all"
+                className={`px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider border transition-colors ${probe.selectedFaceIndex === "all"
                     ? "border-amber bg-amber/20 text-amber font-semibold"
                     : "border-rule text-dim hover:text-bone"
-                }`}
+                  }`}
               >
                 ✦ All Faces + Scene (Dual-Path)
               </button>
@@ -360,11 +359,10 @@ export function Specimen({
                       reading: r,
                     });
                   }}
-                  className={`px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider border transition-colors ${
-                    probe.selectedFaceIndex === idx
+                  className={`px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider border transition-colors ${probe.selectedFaceIndex === idx
                       ? "border-verdict bg-verdict/20 text-verdict font-semibold"
                       : "border-rule text-dim hover:text-bone"
-                  }`}
+                    }`}
                 >
                   Person {idx + 1} ({(r.score * 100).toFixed(0)}%)
                 </button>
