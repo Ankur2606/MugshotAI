@@ -231,4 +231,4 @@ facechain/
 
 ## License
 
-MIT License. Developed for Cracked Devs
+MIT License. Developed for Cracked Devs.
