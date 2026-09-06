@@ -201,25 +201,27 @@ export class MultiEngineAggregator implements SearchProvider {
       }
     };
 
+    // 3. Assembly: Scene Context as PRIMARY priority, Person-wise as SECONDARY
     const primaryCrop = faceCrops.find((fc) => fc.isPrimary) || (faceCrops.length === 1 ? faceCrops[0] : null);
 
     if (primaryCrop && faceCandidatesMap.has(primaryCrop.id)) {
-      // Targeted Single-Person Focus:
-      // The operator explicitly clicked this person (e.g. Person 1).
-      // Give high quota to the selected person's biometric leads, and complementary leads to scene context.
+      // Single-Person / Focused Mode:
+      // Priority 1: Scene Context (top 16 leads)
+      // Priority 2 (Secondary): Targeted Person Face Crop (top 12 leads)
       const primaryList = faceCandidatesMap.get(primaryCrop.id)!;
-      primaryList.slice(0, 20).forEach(pushUnique);
-      sceneCandidates.slice(0, 8).forEach(pushUnique);
+      sceneCandidates.slice(0, 16).forEach(pushUnique);
+      primaryList.slice(0, 12).forEach(pushUnique);
 
       // Fill remaining slots
-      primaryList.forEach(pushUnique);
       sceneCandidates.forEach(pushUnique);
+      primaryList.forEach(pushUnique);
     } else {
-      // Dual-Path / Multi-Face Focus:
-      // Scene Context (top 10 leads) + Fair quota per detected person (top 6 leads each)
-      sceneCandidates.slice(0, 10).forEach(pushUnique);
+      // Dual-Path / Multi-Face Mode:
+      // Priority 1: Scene Context (top 16 leads)
+      // Priority 2 (Secondary): Each detected person (fair quota across persons)
+      sceneCandidates.slice(0, 16).forEach(pushUnique);
       for (const list of faceCandidatesMap.values()) {
-        list.slice(0, 6).forEach(pushUnique);
+        list.slice(0, 5).forEach(pushUnique);
       }
 
       // Fill remaining slots

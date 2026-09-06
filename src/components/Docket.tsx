@@ -448,7 +448,11 @@ export function Docket() {
     for (const c of candidates) {
       set.add(c.probeCategory || "scene");
     }
-    return Array.from(set);
+    return Array.from(set).sort((a, b) => {
+      if (a === "scene") return -1;
+      if (b === "scene") return 1;
+      return a.localeCompare(b);
+    });
   }, [candidates]);
 
   const filteredCandidates = useMemo(() => {
