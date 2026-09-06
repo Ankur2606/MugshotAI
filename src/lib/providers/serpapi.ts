@@ -1,5 +1,6 @@
 import type { Candidate, SearchOutcome, SearchProvider } from "./types";
 import { hostOf, isSocial } from "./types";
+import sharp from "sharp";
 
 /**
  * Google Lens through SerpApi.
@@ -26,13 +27,23 @@ export class SerpApiLens implements SearchProvider {
 
   private async uploadImage(image: Uint8Array, mime: string): Promise<string> {
     // SerpApi caps the upload at 500 KB.
-    if (image.byteLength > 500_000) {
-      throw new Error(
-        `Probe image is ${Math.round(image.byteLength / 1024)} KB; SerpApi accepts at most 500 KB. Re-capture at a lower resolution.`,
-      );
+    let payload = image;
+    let payloadMime = mime;
+    if (payload.byteLength > 480_000) {
+      try {
+        const compressed = await sharp(image)
+          .resize({ width: 1024, withoutEnlargement: true })
+          .jpeg({ quality: 80 })
+          .toBuffer();
+        payload = new Uint8Array(compressed);
+        payloadMime = "image/jpeg";
+      } catch {
+        // if sharp compression fails, continue with original
+      }
     }
+
     const form = new FormData();
-    form.append("image", new Blob([image as BlobPart], { type: mime }), "probe.jpg");
+    form.append("image", new Blob([payload as BlobPart], { type: payloadMime }), "probe.jpg");
     form.append("api_key", this.key);
 
     const res = await fetch("https://serpapi.com/image", { method: "POST", body: form });

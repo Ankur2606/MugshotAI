@@ -30,6 +30,8 @@ export async function POST(req: Request) {
 
   let bytes: Uint8Array;
   let mime: string;
+  let probes: Array<{ id: string; label: string; box?: [number, number, number, number] }> | undefined = undefined;
+
   try {
     const form = await req.formData();
     const file = form.get("image");
@@ -38,6 +40,26 @@ export async function POST(req: Request) {
     }
     bytes = new Uint8Array(await file.arrayBuffer());
     mime = file.type || "image/jpeg";
+
+    const probesRaw = form.get("probes");
+    if (typeof probesRaw === "string") {
+      try {
+        const parsed = JSON.parse(probesRaw);
+        if (Array.isArray(parsed)) {
+          probes = parsed;
+        }
+      } catch {}
+    } else {
+      const boxRaw = form.get("faceBox");
+      if (typeof boxRaw === "string") {
+        try {
+          const parsedBox = JSON.parse(boxRaw);
+          if (Array.isArray(parsedBox) && parsedBox.length === 4) {
+            probes = [{ id: "face_0", label: "Face Target", box: parsedBox as [number, number, number, number] }];
+          }
+        } catch {}
+      }
+    }
   } catch {
     return NextResponse.json({ error: "Could not read the uploaded probe image." }, { status: 400 });
   }
@@ -48,14 +70,14 @@ export async function POST(req: Request) {
 
   try {
     const started = Date.now();
-    const outcome = await provider.search(bytes, mime);
+    const outcome = await provider.search(bytes, mime, probes);
     return NextResponse.json({
       provider: outcome.provider,
       providerLabel: provider.label,
       queryRef: outcome.queryRef ?? null,
       probeImageSha256: sha256Bytes(bytes),
       elapsedMs: Date.now() - started,
-      candidates: outcome.candidates.slice(0, 24),
+      candidates: outcome.candidates.slice(0, 28),
       totalFound: outcome.candidates.length,
     });
   } catch (e) {
