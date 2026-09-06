@@ -20,7 +20,7 @@ const config: Partial<Config> = {
   filter: { enabled: true, equalization: false },
   face: {
     enabled: true,
-    detector: { rotation: true, maxDetected: 1, minConfidence: 0.2, return: false },
+    detector: { rotation: true, maxDetected: 8, minConfidence: 0.2, return: false },
     mesh: { enabled: true },
     iris: { enabled: true },
     description: { enabled: true }, // produces the 1024-d embedding
@@ -81,6 +81,8 @@ export type FaceReading = {
   /** detector confidence, 0..1 */
   score: number;
   box: [number, number, number, number];
+  /** Normalized bounding box (0..1) relative to image dimensions */
+  boxRaw?: [number, number, number, number];
   /** mesh points in input pixel space, for the overlay */
   mesh: Array<[number, number]>;
   /** anti-spoof confidence that this is a real face, 0..1 */
@@ -97,6 +99,7 @@ function toReading(face: FaceResult): FaceReading | null {
     embedding: Array.from(face.embedding),
     score: face.faceScore ?? face.score ?? 0,
     box: face.box as [number, number, number, number],
+    boxRaw: face.boxRaw as [number, number, number, number] | undefined,
     mesh: (face.mesh ?? []).map((p) => [p[0], p[1]] as [number, number]),
     real: typeof face.real === "number" ? face.real : null,
     live: typeof face.live === "number" ? face.live : null,
@@ -114,6 +117,19 @@ export async function readFace(
   if (!result.face || result.face.length === 0) return null;
   const best = [...result.face].sort((a, b) => (b.faceScore ?? 0) - (a.faceScore ?? 0))[0];
   return toReading(best);
+}
+
+/** Detect and encode all faces present in the input. */
+export async function readAllFaces(
+  input: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement,
+): Promise<FaceReading[]> {
+  const human = await loadEngine();
+  const result: Result = await human.detect(input);
+  if (!result.face || result.face.length === 0) return [];
+  return result.face
+    .map(toReading)
+    .filter((r): r is FaceReading => r !== null)
+    .sort((a, b) => b.score - a.score);
 }
 
 /**
