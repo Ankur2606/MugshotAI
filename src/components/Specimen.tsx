@@ -19,6 +19,7 @@ export type Probe = {
   reading: FaceReading;
   allReadings?: FaceReading[];
   selectedFaceIndex?: number | "all";
+  imageSize?: { width: number; height: number };
   capturedAt: number;
   origin: "camera" | "file";
 };
@@ -51,6 +52,8 @@ export function Specimen({
   const [note, setNote] = useState<string | null>(null);
   const [flash, setFlash] = useState(false);
   const [showCropper, setShowCropper] = useState(false);
+  const [uploadPreviewUrl, setUploadPreviewUrl] = useState<string | null>(null);
+  const [uploadProcessing, setUploadProcessing] = useState(false);
   const reduced = useReducedMotion();
 
   const handleApplyCrop = useCallback(
@@ -73,6 +76,7 @@ export function Specimen({
         reading,
         allReadings,
         selectedFaceIndex: "all",
+        imageSize: { width: img.naturalWidth, height: img.naturalHeight },
         capturedAt: Math.floor(Date.now() / 1000),
         origin: "file",
       });
@@ -188,6 +192,7 @@ export function Specimen({
       reading,
       allReadings: allReadings.length > 0 ? allReadings : [reading],
       selectedFaceIndex: "all",
+      imageSize: { width: video.videoWidth, height: video.videoHeight },
       capturedAt: Math.floor(Date.now() / 1000),
       origin: "camera",
     });
@@ -198,32 +203,59 @@ export function Specimen({
     async (file: File) => {
       setNote(null);
       const url = URL.createObjectURL(file);
+      setUploadPreviewUrl(url);
+      setUploadProcessing(true);
+
+      // Paint the selected image and veil before local face inference begins.
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
       const img = new Image();
       img.src = url;
-      await img.decode().catch(() => {
+      try {
+        await img.decode();
+        const allReadings = await readAllFaces(img);
+        const reading = allReadings[0];
+        if (!reading) {
+          setNote("No face found in that image. Try a clearer, front-facing photo.");
+          return;
+        }
+        const blob = await frameToJpeg(img);
+        onProbe({
+          blob,
+          previewUrl: URL.createObjectURL(blob),
+          reading,
+          allReadings,
+          selectedFaceIndex: "all",
+          imageSize: { width: img.naturalWidth, height: img.naturalHeight },
+          capturedAt: Math.floor(Date.now() / 1000),
+          origin: "file",
+        });
+      } catch {
         setNote("That file could not be read as an image.");
-      });
-      const allReadings = await readAllFaces(img);
-      const reading = allReadings[0];
-      if (!reading) {
-        setNote("No face found in that image. Try a clearer, front-facing photo.");
-        return;
+      } finally {
+        setUploadProcessing(false);
+        setUploadPreviewUrl(null);
+        URL.revokeObjectURL(url);
       }
-      const blob = await frameToJpeg(img);
-      onProbe({
-        blob,
-        previewUrl: URL.createObjectURL(blob),
-        reading,
-        allReadings,
-        selectedFaceIndex: "all",
-        capturedAt: Math.floor(Date.now() / 1000),
-        origin: "file",
-      });
     },
     [onProbe],
   );
 
   const shown = probe?.reading ?? live;
+
+  const selectFace = useCallback(
+    (selectedFaceIndex: number | "all") => {
+      if (!probe || !probe.allReadings) return;
+      onProbe({
+        ...probe,
+        selectedFaceIndex,
+        reading: selectedFaceIndex === "all"
+          ? probe.allReadings[0]
+          : probe.allReadings[selectedFaceIndex],
+      });
+    },
+    [onProbe, probe],
+  );
 
   // the housing brackets tell the station's state at a glance:
   // hairline at rest, safelight while the detector runs, verdict once held
@@ -245,6 +277,13 @@ export function Specimen({
               alt="Captured probe"
               className="h-full w-full object-contain"
             />
+          ) : uploadPreviewUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={uploadPreviewUrl}
+              alt="Selected upload"
+              className="h-full w-full object-contain"
+            />
           ) : (
             <>
               <video
@@ -260,6 +299,28 @@ export function Specimen({
                 style={{ transform: "scaleX(-1)" }}
               />
             </>
+          )}
+
+          {uploadProcessing && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-gray-500/55 backdrop-blur-[1px]"
+            >
+              <span className="h-9 w-9 animate-spin rounded-full border-2 border-bone/30 border-t-amber" />
+              <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-bone">
+                Processing image
+              </span>
+            </div>
+          )}
+
+          {probe?.allReadings && probe.allReadings.length > 0 && probe.imageSize && (
+            <FaceRegionOverlay
+              readings={probe.allReadings}
+              imageSize={probe.imageSize}
+              selectedFaceIndex={probe.selectedFaceIndex ?? "all"}
+              onSelect={selectFace}
+            />
           )}
 
           {/* corner brackets on the housing, echoing the detector's marks inside */}
@@ -281,7 +342,7 @@ export function Specimen({
             />
           ))}
 
-          {!cameraOn && !probe && (
+          {!cameraOn && !probe && !uploadPreviewUrl && (
             <div className="absolute inset-0 grid place-items-center">
               <motion.span
                 className="eyebrow"
@@ -334,13 +395,9 @@ export function Specimen({
             <div className="flex flex-wrap gap-1.5">
               <button
                 type="button"
-                onClick={() => {
-                  onProbe({
-                    ...probe,
-                    selectedFaceIndex: "all",
-                    reading: probe.allReadings![0],
-                  });
-                }}
+                  onClick={() => {
+                    selectFace("all");
+                  }}
                 className={`px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider border transition-colors ${probe.selectedFaceIndex === "all"
                     ? "border-amber bg-amber/20 text-amber font-semibold"
                     : "border-rule text-dim hover:text-bone"
@@ -353,11 +410,7 @@ export function Specimen({
                   key={idx}
                   type="button"
                   onClick={() => {
-                    onProbe({
-                      ...probe,
-                      selectedFaceIndex: idx,
-                      reading: r,
-                    });
+                    selectFace(idx);
                   }}
                   className={`px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider border transition-colors ${probe.selectedFaceIndex === idx
                       ? "border-verdict bg-verdict/20 text-verdict font-semibold"
@@ -402,7 +455,7 @@ export function Specimen({
             <ConsoleButton
               variant="quiet"
               onClick={() => fileRef.current?.click()}
-              disabled={engine !== "ready"}
+              disabled={engine !== "ready" || uploadProcessing}
             >
               Upload photo
             </ConsoleButton>
@@ -489,6 +542,91 @@ export function Specimen({
         )}
       </dl>
     </div>
+  );
+}
+
+function FaceRegionOverlay({
+  readings,
+  imageSize,
+  selectedFaceIndex,
+  onSelect,
+}: {
+  readings: FaceReading[];
+  imageSize: { width: number; height: number };
+  selectedFaceIndex: number | "all";
+  onSelect: (index: number) => void;
+}) {
+  const selected = typeof selectedFaceIndex === "number" ? selectedFaceIndex : null;
+
+  return (
+    <svg
+      aria-label="Detected face regions"
+      className="pointer-events-none absolute inset-0 z-10 h-full w-full overflow-visible"
+      viewBox={`0 0 ${imageSize.width} ${imageSize.height}`}
+      preserveAspectRatio="xMidYMid meet"
+    >
+      {readings.map((reading, index) => {
+        const [x, y, width, height] = reading.boxRaw
+          ? [
+              reading.boxRaw[0] * imageSize.width,
+              reading.boxRaw[1] * imageSize.height,
+              reading.boxRaw[2] * imageSize.width,
+              reading.boxRaw[3] * imageSize.height,
+            ]
+          : reading.box;
+        const isActive = selected === null || selected === index;
+
+        return (
+          <motion.g
+            key={index}
+            initial={{ opacity: 0, scale: 0.96, transformOrigin: `${x + width / 2}px ${y + height / 2}px` }}
+            animate={{ opacity: isActive ? 1 : 0.32, scale: isActive ? 1 : 0.985 }}
+            transition={{ duration: 0.42, ease: EASE }}
+            style={{ willChange: "transform, opacity" }}
+          >
+            <motion.rect
+              x={x}
+              y={y}
+              width={width}
+              height={height}
+              rx={Math.max(6, width * 0.04)}
+              fill={isActive ? "rgba(232,163,61,0.09)" : "rgba(124,135,145,0.04)"}
+              stroke={isActive ? "var(--amber)" : "var(--dim)"}
+              strokeWidth={Math.max(2, imageSize.width * 0.003)}
+              strokeDasharray={isActive ? "none" : "8 7"}
+              className="pointer-events-auto cursor-pointer"
+              onClick={() => onSelect(index)}
+              whileHover={{ fill: "rgba(232,163,61,0.18)" }}
+              transition={{ duration: 0.22, ease: EASE }}
+            />
+            <motion.rect
+              aria-hidden
+              x={x - 3}
+              y={y - 3}
+              width={width + 6}
+              height={height + 6}
+              rx={Math.max(8, width * 0.05)}
+              fill="none"
+              stroke="var(--amber)"
+              strokeWidth={Math.max(1, imageSize.width * 0.0015)}
+              animate={isActive ? { opacity: [0.7, 0, 0.7] } : { opacity: 0 }}
+              transition={{ duration: 2.4, repeat: isActive ? Infinity : 0, ease: "easeInOut" }}
+            />
+            <motion.text
+              x={x + 8}
+              y={Math.max(18, y - 8)}
+              fill={isActive ? "var(--amber)" : "var(--dim)"}
+              fontFamily="var(--font-jetbrains), ui-monospace, monospace"
+              fontSize={Math.max(12, imageSize.width * 0.018)}
+              fontWeight="700"
+              letterSpacing="1.5"
+            >
+              P{index + 1}
+            </motion.text>
+          </motion.g>
+        );
+      })}
+    </svg>
   );
 }
 

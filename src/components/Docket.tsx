@@ -17,7 +17,6 @@ import {
   ENCODER_ID,
   imageFromDataUrl,
   passesQualityGate,
-  readFace,
   scoreCandidateFace,
   resetEngineToProbeConfig,
 } from "@/lib/human-client";
@@ -461,6 +460,60 @@ export function Docket() {
     return candidates.filter((c) => (c.probeCategory || "scene") === activeFacet);
   }, [candidates, activeFacet]);
 
+  const carouselCandidates = useMemo(() => {
+    const scoredCandidates = filteredCandidates.filter((candidate) => candidate.similarityBp !== null);
+    if (activeFacet !== "all") {
+      return [...scoredCandidates].sort((a, b) => (b.similarityBp ?? -1) - (a.similarityBp ?? -1));
+    }
+
+    const scoringComplete = candidates.length > 0 && candidates.every(
+      (candidate) => candidate.phase === "scored" || candidate.phase === "skipped",
+    );
+    if (!scoringComplete) return scoredCandidates;
+
+    const categoryOf = (candidate: Scored) => candidate.probeCategory || "scene";
+    const categoryRank = (category: string) => {
+      if (category === "scene") return 0;
+      const faceNumber = Number(category.match(/^face_(\d+)$/)?.[1]);
+      return Number.isFinite(faceNumber) ? faceNumber + 1 : Number.MAX_SAFE_INTEGER;
+    };
+    const byScore = (a: Scored, b: Scored) => (b.similarityBp ?? -1) - (a.similarityBp ?? -1);
+    const ranked = [...scoredCandidates].sort(byScore);
+    const first = ranked.find((candidate) => candidate.similarityBp !== null);
+    if (!first) return scoredCandidates;
+
+    const ordered: Scored[] = [first];
+    const usedKeys = new Set([first.key]);
+    const categories = Array.from(new Set(scoredCandidates.map(categoryOf)))
+      .filter((category) => category !== categoryOf(first))
+      .sort((a, b) => categoryRank(a) - categoryRank(b) || a.localeCompare(b));
+
+    // Give every other probe category its best result before the long tail.
+    for (const category of categories) {
+      const bestInCategory = ranked.find(
+        (candidate) => categoryOf(candidate) === category && !usedKeys.has(candidate.key),
+      );
+      if (bestInCategory) {
+        ordered.push(bestInCategory);
+        usedKeys.add(bestInCategory.key);
+      }
+    }
+
+    // The remaining results return to the stable scene, person 1, person 2… order.
+    for (const category of Array.from(new Set(scoredCandidates.map(categoryOf))).sort(
+      (a, b) => categoryRank(a) - categoryRank(b) || a.localeCompare(b),
+    )) {
+      for (const candidate of ranked) {
+        if (categoryOf(candidate) === category && !usedKeys.has(candidate.key)) {
+          ordered.push(candidate);
+          usedKeys.add(candidate.key);
+        }
+      }
+    }
+
+    return ordered;
+  }, [activeFacet, candidates, filteredCandidates]);
+
   return (
     <>
       <GateIntro />
@@ -655,7 +708,7 @@ export function Docket() {
           {/* Discovered Evidence 3D Carousel */}
           {scored.length > 0 && (
             <CandidateCarousel
-              candidates={scored}
+              candidates={carouselCandidates}
               thresholdBp={thresholdBp}
               selectedKey={best?.key ?? null}
               onSelect={(key) => setSelectedCandidateKey(key)}
