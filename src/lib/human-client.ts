@@ -128,7 +128,7 @@ export async function readFace(
 const candidateScoreConfig: Partial<Config> = {
   face: {
     enabled: true,
-    detector: { rotation: true, maxDetected: 1, minConfidence: 0.35, return: false },
+    detector: { rotation: true, maxDetected: 1, minConfidence: 0.25, return: false },
     mesh: { enabled: true },
     iris: { enabled: false },
     description: { enabled: true },
@@ -142,9 +142,117 @@ export async function scoreCandidateFace(
   input: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement,
 ): Promise<FaceReading | null> {
   const human = await loadEngine();
-  const result: Result = await human.detect(input, candidateScoreConfig);
+  let result: Result = await human.detect(input, candidateScoreConfig);
+
+  // If initial detection on small input image found nothing, try upscaling the canvas
+  if ((!result.face || result.face.length === 0) && typeof document !== "undefined") {
+    try {
+      const w =
+        input instanceof HTMLVideoElement
+          ? input.videoWidth
+          : (input as HTMLImageElement).naturalWidth || (input as HTMLCanvasElement).width || 0;
+      const h =
+        input instanceof HTMLVideoElement
+          ? input.videoHeight
+          : (input as HTMLImageElement).naturalHeight || (input as HTMLCanvasElement).height || 0;
+
+      if (w > 0 && h > 0 && (w < 400 || h < 400)) {
+        const scale = Math.min(3, Math.max(1.5, 480 / Math.max(w, h)));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(w * scale);
+        canvas.height = Math.round(h * scale);
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(input, 0, 0, canvas.width, canvas.height);
+          const retryResult = await human.detect(canvas, candidateScoreConfig);
+          if (retryResult.face && retryResult.face.length > 0) {
+            const face = retryResult.face[0];
+            if (face.box) {
+              face.box = [
+                face.box[0] / scale,
+                face.box[1] / scale,
+                face.box[2] / scale,
+                face.box[3] / scale,
+              ];
+            }
+            result = retryResult;
+          }
+        }
+      }
+    } catch {
+      // Non-fatal fallback
+    }
+  }
+
   if (!result.face || result.face.length === 0) return null;
-  return toReading(result.face[0]);
+  const initialFace = result.face[0];
+  const reading = toReading(initialFace);
+  if (!reading) return null;
+
+  // Super-resolution crop for low-px faces (< 48px):
+  // When the detected face is small (e.g. 16px or 33px in full-body or thumbnail photos),
+  // crop the facial region with 45% contextual margin and render onto a 256x256 canvas
+  // with high-quality bicubic smoothing. Re-encoding on this normalized canvas gives faceres
+  // sharp feature gradients and aligned landmarks, avoiding centroid drift on low-res images.
+  const side = Math.min(reading.box[2], reading.box[3]);
+  if (side < 48 && side >= 8 && typeof document !== "undefined") {
+    try {
+      const w =
+        input instanceof HTMLVideoElement
+          ? input.videoWidth
+          : (input as HTMLImageElement).naturalWidth || (input as HTMLCanvasElement).width || 0;
+      const h =
+        input instanceof HTMLVideoElement
+          ? input.videoHeight
+          : (input as HTMLImageElement).naturalHeight || (input as HTMLCanvasElement).height || 0;
+
+      if (w > 0 && h > 0) {
+        const [fx, fy, fw, fh] = reading.box;
+        const padX = fw * 0.45;
+        const padY = fh * 0.45;
+        const cropX = Math.max(0, fx - padX);
+        const cropY = Math.max(0, fy - padY);
+        const cropW = Math.min(w - cropX, fw + padX * 2);
+        const cropH = Math.min(h - cropY, fh + padY * 2);
+
+        if (cropW >= 8 && cropH >= 8) {
+          const targetDim = 256;
+          const canvas = document.createElement("canvas");
+          canvas.width = targetDim;
+          canvas.height = targetDim;
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = "high";
+            ctx.drawImage(input, cropX, cropY, cropW, cropH, 0, 0, targetDim, targetDim);
+
+            const enhanced = await human.detect(canvas, candidateScoreConfig);
+            if (enhanced.face && enhanced.face.length > 0) {
+              const enhancedReading = toReading(enhanced.face[0]);
+              if (
+                enhancedReading &&
+                enhancedReading.embedding?.length === reading.embedding.length
+              ) {
+                return {
+                  ...enhancedReading,
+                  // Retain original box and boxRaw coordinates so UI reflects source dimensions
+                  box: reading.box,
+                  boxRaw: reading.boxRaw,
+                  score: Math.max(reading.score, enhancedReading.score),
+                };
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // Non-fatal fallback
+    }
+  }
+
+  return reading;
 }
 
 /** Detect and encode all faces present in the input. */
@@ -171,21 +279,19 @@ export async function resetEngineToProbeConfig(): Promise<void> {
 }
 
 /**
- * Quality gates for candidate scoring. Cosine similarity on face embeddings
- * degrades sharply below ~50px of face — low-resolution crops drift toward
- * the mean face and inflate false matches — so a candidate face smaller than
- * this, or one the detector itself is unsure about, is refused a score
- * rather than given a misleading one.
+ * Quality gates for candidate scoring. Supports low-resolution web candidates (down to 10px)
+ * via targeted super-resolution upscaling while protecting against non-face artifacts.
  */
-export const MIN_FACE_PX = 48;
-export const MIN_FACE_SCORE = 0.45;
+export const MIN_FACE_PX = 10;
+export const MIN_FACE_SCORE = 0.30;
 
 export function passesQualityGate(r: FaceReading): { ok: boolean; reason?: string } {
   const side = Math.min(r.box[2], r.box[3]);
   if (side < MIN_FACE_PX) {
     return { ok: false, reason: `face is ${Math.round(side)}px — too small to score fairly` };
   }
-  if (r.score < MIN_FACE_SCORE) {
+  const minScore = side < 32 ? 0.25 : MIN_FACE_SCORE;
+  if (r.score < minScore) {
     return { ok: false, reason: "detector was not confident enough in this face" };
   }
   return { ok: true };
