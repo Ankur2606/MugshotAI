@@ -163,7 +163,7 @@ export interface SearchProvider {
 The registry in `index.ts` dynamically resolves the provider specified by `SEARCH_PROVIDER`:
 - **`MultiEngineAggregator` (Default)**: Orchestrates all four search paths concurrently.
 - **`SerpApiLens`**: Sends the probe image to `serpapi.com/image` to obtain an `image_id`, then queries Google Lens (`engine=google_lens`).
-- **`SerpApiYandex`**: Queries Yandex Images reverse search via SerpApi.
+- **`FaceCheckId`**: True face-embedding search. Paid (credits), so Lens is the default.
 
 ### 4.2 Quad-Path Aggregator Architecture
 

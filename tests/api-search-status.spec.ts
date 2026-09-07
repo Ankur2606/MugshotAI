@@ -12,13 +12,12 @@ test.describe("Search & Status APIs", () => {
     expect(Array.isArray(json.search.providers)).toBeTruthy();
 
     const providerIds = json.search.providers.map((p: { id: string }) => p.id);
-    expect(providerIds).toContain("aggregator:lens_yandex");
+    expect(providerIds).toContain("aggregator:lens_multiface");
     expect(providerIds).toContain("serpapi:google_lens");
-    expect(providerIds).toContain("serpapi:yandex_images");
     expect(providerIds).toContain("facecheck.id");
 
     if (json.search.active) {
-      expect(json.search.active.id).toBe("aggregator:lens_yandex");
+      expect(json.search.active.id).toBe("aggregator:lens_multiface");
       expect(json.search.active.label).toContain("Multi-Engine");
     }
   });
