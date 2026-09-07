@@ -7,7 +7,7 @@
 face scan  ─▶  web / social trace  ─▶  in-browser re-encode  ─▶  keccak256  ─▶  on-chain seal  ─▶  re-verify
 ```
 
-Built for cracked devs who gonna judge us for task 3
+Built for cracked devs those who gonna judge us for task 3
 
 ---
 
