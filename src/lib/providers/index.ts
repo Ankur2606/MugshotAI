@@ -1,6 +1,7 @@
 import type { SearchProvider } from "./types";
 import { SerpApiLens } from "./serpapi";
 import { SerpApiYandex } from "./yandex";
+import { SerpApiBing } from "./bing";
 import { MultiEngineAggregator } from "./aggregator";
 import { FaceCheckId } from "./facecheck";
 
@@ -8,6 +9,7 @@ const REGISTRY: SearchProvider[] = [
   new MultiEngineAggregator(),
   new SerpApiLens(),
   new SerpApiYandex(),
+  new SerpApiBing(),
   new FaceCheckId(),
 ];
 
@@ -29,7 +31,8 @@ export function activeProvider(): SearchProvider | null {
         p.id.split(":")[0] === want ||
         p.id.split(":")[1] === want ||
         (want === "lens" && p.id.includes("lens")) ||
-        (want === "yandex" && p.id.includes("yandex")),
+        (want === "yandex" && p.id.includes("yandex")) ||
+        (want === "bing" && p.id.includes("bing")),
     );
     if (named) return named;
   }

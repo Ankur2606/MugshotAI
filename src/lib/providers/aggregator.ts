@@ -1,5 +1,6 @@
 import type { Candidate, ProbeBox, SearchOutcome, SearchProvider } from "./types";
 import { SerpApiLens } from "./serpapi";
+import { SerpApiBing } from "./bing";
 import { isSocial } from "./types";
 import sharp from "sharp";
 
@@ -17,6 +18,12 @@ export class MultiEngineAggregator implements SearchProvider {
   readonly label = "SOTA Multi-Engine (Lens + Multi-Face)";
 
   private lens = new SerpApiLens();
+  /**
+   * Bing crawls independently of Google, so it returns pages Lens does not.
+   * It runs on the scene probe only: it is duplicate/scene matching, so the
+   * extra calls per face crop would spend quota for little added recall.
+   */
+  private bing = new SerpApiBing();
 
   configured(): boolean {
     return this.lens.configured();
@@ -98,13 +105,27 @@ export class MultiEngineAggregator implements SearchProvider {
     }
 
     // 2. Dispatch queries: Person Face Crops + Global Scene Context in parallel
-    const queries: Array<Promise<{ source: "lens"; category: string; label: string; isScene: boolean; outcome: SearchOutcome }>> = [];
+    const queries: Array<Promise<{ source: "lens" | "bing"; category: string; label: string; isScene: boolean; outcome: SearchOutcome }>> = [];
 
     // Global Scene queries: full contextual scene + all persons
     if (this.lens.configured()) {
       queries.push(
         this.lens.search(image, mime).then((outcome) => ({
-          source: "lens",
+          source: "lens" as const,
+          category: "scene",
+          label: "Scene Context",
+          isScene: true,
+          outcome,
+        })),
+      );
+    }
+
+    // A second index over the same scene. Promise.allSettled below means a
+    // Bing failure costs nothing: Lens results still stand on their own.
+    if (this.bing.configured()) {
+      queries.push(
+        this.bing.search(image, mime).then((outcome) => ({
+          source: "bing" as const,
           category: "scene",
           label: "Scene Context",
           isScene: true,
@@ -118,7 +139,7 @@ export class MultiEngineAggregator implements SearchProvider {
       if (this.lens.configured()) {
         queries.push(
           this.lens.search(fc.image, "image/jpeg").then((outcome) => ({
-            source: "lens",
+            source: "lens" as const,
             category: fc.id,
             label: fc.label,
             isScene: false,
