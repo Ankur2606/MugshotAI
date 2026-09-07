@@ -5,6 +5,22 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const MAX_BYTES = 8 * 1024 * 1024;
+const MAX_HTML_BYTES = 2 * 1024 * 1024;
+
+function imageFromHtml(html: string, base: URL): string | null {
+  const patterns = [
+    /<meta[^>]+(?:property|name)=["'](?:og:image|og:image:url|twitter:image)["'][^>]+content=["']([^"']+)["']/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["'](?:og:image|og:image:url|twitter:image)["']/i,
+  ];
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (!match?.[1]) continue;
+    try {
+      return new URL(match[1].replace(/&amp;/g, "&"), base).toString();
+    } catch {}
+  }
+  return null;
+}
 
 /**
  * Fetches a candidate image server-side and hands back both the bytes (as a
@@ -69,9 +85,83 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Image exceeds the 8 MB fetch limit." }, { status: 413 });
     }
 
-    const mime = res.headers.get("content-type")?.split(";")[0] || "image/jpeg";
+    let mime = res.headers.get("content-type")?.split(";")[0] || "image/jpeg";
     if (!mime.startsWith("image/")) {
-      return NextResponse.json({ error: `Source served ${mime}, not an image.` }, { status: 415 });
+      // Instagram/Facebook crawler endpoints often return a shell without
+      // metadata to an image-oriented request. Retry as a page before giving
+      // up, then resolve its og:image/twitter:image URL.
+      const htmlResponse = await fetch(parsed.toString(), {
+        headers: {
+          Accept: "text/html,application/xhtml+xml,*/*;q=0.8",
+          Referer: `${parsed.origin}/`,
+        },
+        redirect: "follow",
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (htmlResponse.ok) {
+        const htmlMime = htmlResponse.headers.get("content-type")?.split(";")[0] || "";
+        if (!htmlMime.startsWith("image/")) {
+          const html = await htmlResponse.text();
+          const imageUrl = imageFromHtml(html, parsed);
+          if (imageUrl) {
+            const imageResponse = await fetch(imageUrl, {
+              headers: {
+                "User-Agent": UA,
+                Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+                Referer: `${parsed.origin}/`,
+              },
+              redirect: "follow",
+              signal: AbortSignal.timeout(20_000),
+            });
+            const imageMime = imageResponse.headers.get("content-type")?.split(";")[0] || "";
+            if (imageResponse.ok && imageMime.startsWith("image/")) {
+              const imageBuf = new Uint8Array(await imageResponse.arrayBuffer());
+              if (imageBuf.byteLength > 0 && imageBuf.byteLength <= MAX_BYTES) {
+                return NextResponse.json({
+                  sha256: sha256Bytes(imageBuf),
+                  mime: imageMime,
+                  bytes: imageBuf.byteLength,
+                  dataUrl: `data:${imageMime};base64,${Buffer.from(imageBuf).toString("base64")}`,
+                });
+              }
+            }
+          }
+        }
+      }
+      if (buf.byteLength > MAX_HTML_BYTES) {
+        return NextResponse.json({ error: `Source served ${mime}, not an image.` }, { status: 415 });
+      }
+      const imageUrl = imageFromHtml(new TextDecoder().decode(buf), parsed);
+      if (!imageUrl) {
+        return NextResponse.json({ error: `Source served ${mime}, not an image.` }, { status: 415 });
+      }
+      const imageResponse = await fetch(imageUrl, {
+        headers: {
+          "User-Agent": UA,
+          Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+          Referer: `${parsed.origin}/`,
+        },
+        redirect: "follow",
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!imageResponse.ok) {
+        return NextResponse.json({ error: `Preview image returned ${imageResponse.status}.` }, { status: 502 });
+      }
+      const imageMime = imageResponse.headers.get("content-type")?.split(";")[0] || "";
+      if (!imageMime.startsWith("image/")) {
+        return NextResponse.json({ error: "Preview source did not return an image." }, { status: 415 });
+      }
+      const imageBuf = new Uint8Array(await imageResponse.arrayBuffer());
+      if (imageBuf.byteLength === 0 || imageBuf.byteLength > MAX_BYTES) {
+        return NextResponse.json({ error: "Preview image is empty or exceeds the 8 MB limit." }, { status: 502 });
+      }
+      mime = imageMime;
+      return NextResponse.json({
+        sha256: sha256Bytes(imageBuf),
+        mime,
+        bytes: imageBuf.byteLength,
+        dataUrl: `data:${mime};base64,${Buffer.from(imageBuf).toString("base64")}`,
+      });
     }
 
     return NextResponse.json({
