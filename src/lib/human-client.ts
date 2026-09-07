@@ -138,13 +138,106 @@ const candidateScoreConfig: Partial<Config> = {
   },
 };
 
+/**
+ * Target face width fed to the encoder when rescuing a small candidate.
+ * faceres wants roughly this much face to produce a stable descriptor; the
+ * exact figure is a tuning knob, not a law — raise it if small-face recall
+ * is still weak, lower it if upscaling starts inventing detail.
+ */
+const RESCUE_FACE_PX = 160;
+/** Never blow a thumbnail up by more than this; past it we are inventing pixels. */
+const MAX_RESCUE_SCALE = 8;
+
+function sourceSize(
+  input: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement,
+): { w: number; h: number } {
+  if (input instanceof HTMLVideoElement) {
+    return { w: input.videoWidth, h: input.videoHeight };
+  }
+  const el = input as HTMLImageElement;
+  return { w: el.naturalWidth || el.width, h: el.naturalHeight || el.height };
+}
+
+/**
+ * Re-run detection on an upscaled copy of the whole image.
+ *
+ * Search engines index tiny thumbnails, and Google Lens will happily rank a
+ * 16px face first. Our detector can find that face but the encoder reads it
+ * as mush, so the descriptor is unusable and the right answer looks like a
+ * miss. Scaling the image so the face lands near RESCUE_FACE_PX adds no
+ * information, but it does put the face in the size range the encoder was
+ * trained on, which is where the recall actually comes back.
+ *
+ * The scale is derived from the measured face box, so nothing here is tied
+ * to a particular image size.
+ */
+async function rescueSmallFace(
+  human: Human,
+  input: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement,
+  firstPass: FaceResult,
+): Promise<FaceReading | null> {
+  const { w, h } = sourceSize(input);
+  if (!w || !h) return null;
+
+  const box = firstPass.box as [number, number, number, number] | undefined;
+  const faceSide = box ? Math.min(box[2], box[3]) : 0;
+  if (!faceSide) return null;
+
+  const scale = Math.min(MAX_RESCUE_SCALE, RESCUE_FACE_PX / faceSide);
+  if (scale <= 1.05) return null; // already big enough to be worth it
+
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(w * scale);
+  canvas.height = Math.round(h * scale);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  // Smooth interpolation beats nearest-neighbour here: the encoder is far more
+  // upset by block edges than by softness.
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(input, 0, 0, canvas.width, canvas.height);
+
+  const result: Result = await human.detect(canvas, candidateScoreConfig);
+  if (!result.face || result.face.length === 0) return null;
+
+  const reading = toReading(result.face[0]);
+  if (!reading) return null;
+
+  // Report the box in ORIGINAL image coordinates so downstream size checks and
+  // overlays stay honest about how small the face really was.
+  return {
+    ...reading,
+    box: [
+      reading.box[0] / scale,
+      reading.box[1] / scale,
+      reading.box[2] / scale,
+      reading.box[3] / scale,
+    ],
+    mesh: reading.mesh.map((p) => [p[0] / scale, p[1] / scale] as [number, number]),
+  };
+}
+
 export async function scoreCandidateFace(
   input: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement,
 ): Promise<FaceReading | null> {
   const human = await loadEngine();
   const result: Result = await human.detect(input, candidateScoreConfig);
   if (!result.face || result.face.length === 0) return null;
-  return toReading(result.face[0]);
+
+  const first = result.face[0];
+  const box = first.box as [number, number, number, number] | undefined;
+  const side = box ? Math.min(box[2], box[3]) : 0;
+
+  // A face big enough to encode well needs no help.
+  if (side >= MIN_FACE_PX) return toReading(first);
+
+  try {
+    const rescued = await rescueSmallFace(human, input, first);
+    if (rescued) return rescued;
+  } catch {
+    // Rescue is an improvement, never a requirement.
+  }
+  return toReading(first);
 }
 
 /** Detect and encode all faces present in the input. */
@@ -171,24 +264,51 @@ export async function resetEngineToProbeConfig(): Promise<void> {
 }
 
 /**
- * Quality gates for candidate scoring. Cosine similarity on face embeddings
- * degrades sharply below ~50px of face — low-resolution crops drift toward
- * the mean face and inflate false matches — so a candidate face smaller than
- * this, or one the detector itself is unsure about, is refused a score
- * rather than given a misleading one.
+ * Quality gates for candidate scoring.
+ *
+ * Cosine similarity on face embeddings degrades below ~48px of face: small
+ * crops drift toward the mean face. The gate exists so a weak descriptor is
+ * not presented with the same authority as a strong one.
+ *
+ * It deliberately does NOT decide visibility. A thumbnail that the search
+ * engine ranked first is evidence even when our encoder reads it poorly —
+ * dropping it means the operator never sees the answer the indexer already
+ * found. So a small face is scored and marked low-confidence, not discarded.
  */
 export const MIN_FACE_PX = 48;
 export const MIN_FACE_SCORE = 0.45;
 
-export function passesQualityGate(r: FaceReading): { ok: boolean; reason?: string } {
+/** Below this the descriptor is noise rather than merely weak. */
+export const FLOOR_FACE_PX = 12;
+
+export type FaceConfidence = "full" | "low";
+
+export function passesQualityGate(
+  r: FaceReading,
+): { ok: boolean; confidence: FaceConfidence; reason?: string } {
   const side = Math.min(r.box[2], r.box[3]);
+  if (side < FLOOR_FACE_PX) {
+    return {
+      ok: false,
+      confidence: "low",
+      reason: `face is ${Math.round(side)}px — below the ${FLOOR_FACE_PX}px floor for any descriptor`,
+    };
+  }
   if (side < MIN_FACE_PX) {
-    return { ok: false, reason: `face is ${Math.round(side)}px — too small to score fairly` };
+    return {
+      ok: true,
+      confidence: "low",
+      reason: `face is ${Math.round(side)}px — scored from an upscaled crop, treat as a lead not a match`,
+    };
   }
   if (r.score < MIN_FACE_SCORE) {
-    return { ok: false, reason: "detector was not confident enough in this face" };
+    return {
+      ok: true,
+      confidence: "low",
+      reason: "detector was not confident in this face — treat as a lead not a match",
+    };
   }
-  return { ok: true };
+  return { ok: true, confidence: "full" };
 }
 
 /**

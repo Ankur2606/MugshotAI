@@ -7,6 +7,25 @@ export const maxDuration = 60;
 const MAX_BYTES = 8 * 1024 * 1024;
 
 /**
+ * Some sites (Instagram among them) only emit og:/twitter: meta tags for
+ * crawlers, so the page refetch below asks as one.
+ */
+const CRAWLER_UA = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)";
+
+/**
+ * og:image URLs arrive HTML-escaped. Signed CDN links carry their signature in
+ * the query string, so leaving &amp; in place breaks the signature and the
+ * fetch 403s. Only the five predefined XML entities can appear in an attribute.
+ */
+const decodeEntities = (s: string) =>
+  s
+    .replace(/&(?:amp|#38|#x26);/gi, "&")
+    .replace(/&(?:lt|#60|#x3c);/gi, "<")
+    .replace(/&(?:gt|#62|#x3e);/gi, ">")
+    .replace(/&(?:quot|#34|#x22);/gi, '"')
+    .replace(/&(?:apos|#39|#x27);/gi, "'");
+
+/**
  * Fetches a candidate image server-side and hands back both the bytes (as a
  * data URL, so the canvas stays untainted and the browser can re-encode the
  * face) and their sha256. Hashing here rather than in the browser keeps the
@@ -54,6 +73,54 @@ export async function GET(req: Request) {
     if (!res.ok) {
       res = await attempt(parsed.origin + "/");
     }
+
+    /**
+     * Some "image" URLs are really page URLs. Instagram's Lens/SERP results
+     * come back as lookaside.instagram.com/seo/google_widget/crawler/?media_id=…,
+     * which 302s to the post's HTML for every UA we can send. The image the
+     * page is about is still declared in its og:image meta tag, so when a
+     * fetch lands on HTML we read that tag and fetch the picture it names.
+     * Host-agnostic: any oEmbed-ish page URL recovers the same way. One hop
+     * only, so a page whose og:image is itself HTML fails instead of looping.
+     */
+    if (res.ok && !(res.headers.get("content-type") || "").startsWith("image/")) {
+      /**
+       * Refetch the page as a crawler. Instagram only renders og/twitter meta
+       * tags for crawler user agents — a browser UA gets a script shell with no
+       * meta tags at all — so the browser-shaped UA above cannot see the image.
+       */
+      const page = await fetch(res.url, {
+        headers: { "User-Agent": CRAWLER_UA, Accept: "text/html,*/*" },
+        redirect: "follow",
+        signal: AbortSignal.timeout(20_000),
+      }).catch(() => null);
+      const html = ((await page?.text()) ?? "").slice(0, 400_000);
+      const og = html.match(
+        /<meta[^>]+(?:property|name)=["'](?:og:image(?::secure_url)?|twitter:image)["'][^>]+content=["']([^"']+)["']/i,
+      );
+      // res is consumed now, so every path below must replace it or bail out.
+      let found: URL | null = null;
+      if (og) {
+        try {
+          const u = new URL(decodeEntities(og[1]), page?.url || res.url);
+          if (u.protocol === "https:" || u.protocol === "http:") found = u;
+        } catch {
+          /* unparseable og:image, treated as absent */
+        }
+      }
+      if (!found) {
+        return NextResponse.json(
+          { error: "Source served a page, not an image." },
+          { status: 415 },
+        );
+      }
+      res = await fetch(found.toString(), {
+        headers: { "User-Agent": UA, Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8" },
+        redirect: "follow",
+        signal: AbortSignal.timeout(20_000),
+      });
+    }
+
     if (!res.ok) {
       return NextResponse.json(
         { error: `Source returned ${res.status} for that image.` },

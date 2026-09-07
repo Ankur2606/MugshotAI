@@ -129,6 +129,29 @@ function isNoise(url: string): boolean {
 }
 
 /**
+ * Single source of truth for "is this GitHub URL a person's account page?".
+ *
+ * Only a bare `github.com/<handle>` counts. Anything deeper is a repo, blob, tree,
+ * issue, gist, pages site, topic or org listing — those name a repo owner or a
+ * keyword, not evidence of a person, so they were pure noise in associated links.
+ * Returns the handle (no @) or null.
+ */
+export function githubProfileFrom(u: URL): string | null {
+  const host = u.hostname.replace(/^www\./, "").toLowerCase();
+  if (host !== "github.com") return null; // excludes gist., raw.githubusercontent.com, *.github.io
+  if (isNoise(u.href)) return null;
+
+  const parts = u.pathname.split("/").filter(Boolean);
+  if (parts.length !== 1) return null; // repo / blob / tree / orgs / topics / sponsors / apps / marketplace / search
+
+  const handle = parts[0];
+  // GitHub username grammar: 1-39 alphanumerics, single hyphens inside only.
+  if (!/^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$/.test(handle)) return null;
+  if (RESERVED_USERNAMES.has(handle.toLowerCase())) return null;
+  return handle;
+}
+
+/**
  * Synchronously extracts author or primary subject profile from URL (LinkedIn, X, GitHub)
  */
 export function extractAuthorFromUrl(targetUrl: string): DiscoveredProfile | null {
@@ -187,19 +210,17 @@ export function extractAuthorFromUrl(targetUrl: string): DiscoveredProfile | nul
       }
     }
 
-    // 3. GitHub owner or profile
-    if (host === "github.com") {
-      const parts = u.pathname.split("/").filter(Boolean);
-      if (parts.length > 0 && !RESERVED_USERNAMES.has(parts[0].toLowerCase())) {
-        return {
-          platform: "github",
-          platformName: "GitHub",
-          url: `https://github.com/${parts[0]}`,
-          handle: `@${parts[0]}`,
-          source: parts.length > 1 ? "author" : "subject",
-          roleLabel: parts.length > 1 ? "Repository Owner" : "Target Profile Subject",
-        };
-      }
+    // 3. GitHub profile (bare account page only)
+    const ghHandle = githubProfileFrom(u);
+    if (ghHandle) {
+      return {
+        platform: "github",
+        platformName: "GitHub",
+        url: `https://github.com/${ghHandle}`,
+        handle: `@${ghHandle}`,
+        source: "subject",
+        roleLabel: "Target Profile Subject",
+      };
     }
   } catch {}
   return null;
@@ -349,20 +370,18 @@ export async function extractPrimarySubjectFromUrl(targetUrl: string): Promise<D
       }
     }
 
-    // 4. GitHub
-    if (host === "github.com") {
-      const parts = u.pathname.split("/").filter(Boolean);
-      if (parts.length > 0 && !RESERVED_USERNAMES.has(parts[0].toLowerCase())) {
-        discovered.push({
-          platform: "github",
-          platformName: "GitHub",
-          url: `https://github.com/${parts[0]}`,
-          handle: `@${parts[0]}`,
-          source: parts.length > 1 ? "author" : "subject",
-          roleLabel: parts.length > 1 ? "Repository Owner" : "Target Profile Subject",
-        });
-        return discovered;
-      }
+    // 4. GitHub (bare account page only)
+    const ghHandle = githubProfileFrom(u);
+    if (ghHandle) {
+      discovered.push({
+        platform: "github",
+        platformName: "GitHub",
+        url: `https://github.com/${ghHandle}`,
+        handle: `@${ghHandle}`,
+        source: "subject",
+        roleLabel: "Target Profile Subject",
+      });
+      return discovered;
     }
   } catch {}
 
@@ -406,16 +425,14 @@ export function classifySocialUrl(urlStr: string): {
     }
 
     // GitHub: github.com/username
-    if (host === "github.com") {
-      const handle = parts[0] || "";
-      if (handle && !RESERVED_USERNAMES.has(handle.toLowerCase()) && /^[a-zA-Z0-9_-]{1,39}$/.test(handle)) {
-        return {
-          platform: "github",
-          platformName: "GitHub",
-          handle: `@${handle}`,
-          canonicalUrl: `https://github.com/${handle}`,
-        };
-      }
+    const ghHandle = githubProfileFrom(u);
+    if (ghHandle) {
+      return {
+        platform: "github",
+        platformName: "GitHub",
+        handle: `@${ghHandle}`,
+        canonicalUrl: `https://github.com/${ghHandle}`,
+      };
     }
 
     // LinkedIn: linkedin.com/in/username or any regional in.linkedin.com / ca.linkedin.com / uk.linkedin.com
@@ -435,7 +452,12 @@ export function classifySocialUrl(urlStr: string): {
 
     // X / Twitter: x.com/username or twitter.com/username
     if (host === "x.com" || host === "twitter.com") {
-      const handle = parts[0]?.replace(/^@/, "") || "";
+      // A profile is one segment; /<user>/status/<id> legitimately identifies
+      // the post author. Anything else (/i/..., /search, /hashtag/...) is not
+      // an account and must not be reported as one.
+      const isProfile = parts.length === 1;
+      const isStatus = parts.length >= 3 && parts[1] === "status";
+      const handle = isProfile || isStatus ? parts[0].replace(/^@/, "") : "";
       if (handle && !RESERVED_USERNAMES.has(handle.toLowerCase()) && /^[a-zA-Z0-9_]{1,15}$/.test(handle)) {
         return {
           platform: "x",
@@ -446,10 +468,14 @@ export function classifySocialUrl(urlStr: string): {
       }
     }
 
-    // Instagram: instagram.com/username
+    // Instagram: instagram.com/username — a profile is one path segment.
+    // Deeper paths (/p/<shortcode>, /reel/..., /explore/tags/...) are content,
+    // not accounts, and surfacing their first segment as a handle is the same
+    // noise the GitHub extractor used to produce.
     if (host === "instagram.com") {
-      const handle = parts[0]?.replace(/^@/, "") || "";
-      if (handle && !RESERVED_USERNAMES.has(handle.toLowerCase()) && /^[a-zA-Z0-9_.]+$/.test(handle)) {
+      const handle = parts.length === 1 ? parts[0].replace(/^@/, "") : "";
+      // Instagram handles: max 30 chars, alphanumerics with . and _ only.
+      if (handle && !RESERVED_USERNAMES.has(handle.toLowerCase()) && /^[a-zA-Z0-9_.]{1,30}$/.test(handle)) {
         return {
           platform: "instagram",
           platformName: "Instagram",

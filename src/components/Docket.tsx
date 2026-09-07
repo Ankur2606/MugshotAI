@@ -19,6 +19,7 @@ import {
   passesQualityGate,
   scoreCandidateFace,
   resetEngineToProbeConfig,
+  type FaceConfidence,
 } from "@/lib/human-client";
 import {
   bundleDigest,
@@ -45,6 +46,8 @@ type Scored = CandidateIn & {
   imageSha256: string | null;
   thumb: string | null;
   note: string | null;
+  /** "low" when the face was too small or too uncertain to encode confidently. */
+  confidence: FaceConfidence;
 };
 
 type Status = {
@@ -144,11 +147,19 @@ export function Docket() {
   const best = useMemo(() => {
     const accepted = scored.filter((c) => (c.similarityBp as number) >= thresholdBp);
     if (accepted.length === 0) return null;
+    // An explicit operator choice wins, low confidence included — sealing is a
+    // human decision and the row says plainly what it is.
     if (selectedCandidateKey) {
       const manual = accepted.find((c) => c.key === selectedCandidateKey);
       if (manual) return manual;
     }
-    return accepted.reduce((a, b) =>
+    // Nothing gets picked automatically off a descriptor we do not trust: a
+    // 16px thumbnail can clear the threshold on noise, and this value is what
+    // ends up anchored on chain. Fall back to low-confidence only if that is
+    // genuinely all there is, so the operator still has something to inspect.
+    const trusted = accepted.filter((c) => c.confidence === "full");
+    const pool = trusted.length > 0 ? trusted : accepted;
+    return pool.reduce((a, b) =>
       (b.similarityBp as number) > (a.similarityBp as number) ? b : a,
     );
   }, [scored, thresholdBp, selectedCandidateKey]);
@@ -235,7 +246,9 @@ export function Docket() {
           patch({ phase: "skipped", note: "no face detected on this page image" });
           return;
         }
-        // refuse to score a face too small or too uncertain to compare fairly
+        // A weak face is scored and flagged, not discarded: the search engine
+        // ranked this page for a reason, and hiding it loses the lead entirely.
+        // Only a face below the descriptor floor is refused outright.
         const gate = passesQualityGate(reading);
         if (!gate.ok) {
           patch({ phase: "skipped", note: gate.reason });
@@ -259,6 +272,8 @@ export function Docket() {
         patch({
           phase: "scored",
           similarityBp: maxSim,
+          confidence: gate.confidence,
+          note: gate.reason ?? null,
         });
       } catch (e) {
         patch({
@@ -338,6 +353,7 @@ export function Docket() {
         imageSha256: null,
         thumb: null,
         note: null,
+        confidence: "full" as FaceConfidence,
       }));
       setCandidates(list);
 
@@ -515,7 +531,6 @@ export function Docket() {
   }, [activeFacet, candidates, filteredCandidates]);
 
   const intelTargets = useMemo(() => {
-    if (!best?.url) return [];
     const targets: Array<{ url: string; category?: string; label?: string; title?: string; similarityBp?: number }> = [];
     const seenUrls = new Set<string>();
 
@@ -527,14 +542,20 @@ export function Docket() {
       return cat;
     };
 
-    seenUrls.add(best.url);
-    targets.push({
-      url: best.url,
-      category: best.probeCategory || "scene",
-      label: formatCategoryLabel(best.probeCategory || "scene", best.probeLabel),
-      title: best.title,
-      similarityBp: best.similarityBp ?? undefined,
-    });
+    // The best match leads when there is one. When nothing clears the
+    // threshold there is still intelligence to gather: the per-category leads
+    // below are crawled regardless, so a weak trace no longer blanks the
+    // whole social panel.
+    if (best?.url) {
+      seenUrls.add(best.url);
+      targets.push({
+        url: best.url,
+        category: best.probeCategory || "scene",
+        label: formatCategoryLabel(best.probeCategory || "scene", best.probeLabel),
+        title: best.title,
+        similarityBp: best.similarityBp ?? undefined,
+      });
+    }
 
     // Add top lead for each detected category / person in group
     const categorySet = new Set<string>();
@@ -762,9 +783,18 @@ export function Docket() {
                 </div>
               </div>
 
-              {/* Cyber Intelligence Outbound Footprint Radar */}
-              <CyberIntelFootprint primaryUrl={best.url} targets={intelTargets} />
             </>
+          )}
+
+          {/* Cyber Intelligence Outbound Footprint Radar.
+              Lives outside the sealed-bundle block on purpose: the social
+              graph is worth gathering from the leads we have even when no
+              candidate cleared the threshold to become a sealable match. */}
+          {intelTargets.length > 0 && (
+            <CyberIntelFootprint
+              primaryUrl={best?.url ?? intelTargets[0].url}
+              targets={intelTargets}
+            />
           )}
 
           {/* Discovered Evidence 3D Carousel */}
@@ -1266,6 +1296,10 @@ function CandidateRow({
           ? "accepted"
           : "rejected";
 
+  // A descriptor read off a 16px thumbnail can cross the threshold on noise
+  // alone, so it is shown but never dressed up as a confirmed match.
+  const isLowConfidence = c.phase === "scored" && c.confidence === "low";
+
   return (
     <motion.li
       className="group relative bg-ink p-4"
@@ -1337,6 +1371,15 @@ function CandidateRow({
                   : "Scene Context")}
             </span>
           </div>
+
+          {isLowConfidence && (
+            <p
+              className="mt-1.5 border border-reject/40 bg-reject/5 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-reject"
+              title={c.note ?? undefined}
+            >
+              low-confidence · small or unclear face
+            </p>
+          )}
 
           <div className="mt-2.5">
             <CalibrationScale
