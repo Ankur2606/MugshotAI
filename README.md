@@ -20,6 +20,8 @@ Built for cracked devs those who gonna judge us for task 3
 
 ## Visual Overview
 
+<img width="1536" height="1024" alt="ChatGPT Image Sep 7, 2026, 11_19_28 PM" src="https://github.com/user-attachments/assets/22c12b09-a93b-4d48-a547-49e1a74a21e9" />
+
 ![Pipeline Architecture](docs/pipeline.svg)
 
 The pipeline is split into four distinct stations operating across three security perimeters (Browser Client $\leftrightarrow$ Next.js Server $\leftrightarrow$ Blockchain Ledger).
