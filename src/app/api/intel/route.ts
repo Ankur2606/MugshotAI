@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const { url, html, category, label } = body;
+    const { url, html, category, label, title } = body;
 
     if (!url || typeof url !== "string") {
       return NextResponse.json(
@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Full remote crawl mode
-    const report = await crawlConnectedIdentities(url, category, label);
+    const report = await crawlConnectedIdentities(url, category, label, title);
     return NextResponse.json(report);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Intelligence crawl failed";
