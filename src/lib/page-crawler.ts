@@ -88,7 +88,7 @@ const RESERVED_USERNAMES = new Set([
   "privacy", "terms", "blog", "jobs", "careers", "login", "signup", "register",
   "admin", "developer", "api", "docs", "settings", "search", "notifications",
   "in", "posts", "feed", "news", "status", "share", "intent", "p", "reel",
-  "company", "school", "learning", "pub", "pulse", "tos"
+  "company", "school", "learning", "pub", "pulse", "tos",
   // YouTube specific junk words
   "s", "desktop", "canvas", "webgl", "webgl2", "lite", "advanced", "wasm",
   "opensearch", "oembed", "ads", "creators", "howyoutubeworks", "error_204",
