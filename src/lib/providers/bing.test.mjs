@@ -107,4 +107,17 @@ assert.equal(got[2].imageUrl, "https://static.wikia.nocookie.net/devito.jpg");
 assert.ok(!got.some((c) => c.title === "orphan"), "redirect-only row dropped");
 assert.ok(!got.some((c) => c.url === "https://example.com/page"), "image-less row dropped");
 
+// Bing ships OFF. Its results are empty in-app because the probe URL we give
+// it is not publicly fetchable, so the flag must default to disabled.
+const configured = (env) => {
+  if ((env.ENABLE_BING || "").toLowerCase() !== "true") return false;
+  return (env.SERPAPI_API_KEY || "").length > 0;
+};
+assert.equal(configured({ SERPAPI_API_KEY: "k" }), false, "OFF by default: probe delivery is unsolved");
+assert.equal(configured({ SERPAPI_API_KEY: "k", ENABLE_BING: "false" }), false, "explicit false stays off");
+assert.equal(configured({ SERPAPI_API_KEY: "k", ENABLE_BING: "true" }), true, "opt-in turns it on");
+assert.equal(configured({ SERPAPI_API_KEY: "k", ENABLE_BING: "TRUE" }), true, "case-insensitive");
+assert.equal(configured({ ENABLE_BING: "true" }), false, "no key means not configured");
+
 console.log("bing provider schema checks: OK");
+console.log("bing feature-flag checks: OK");

@@ -20,7 +20,23 @@ export class SerpApiBing implements SearchProvider {
     return process.env.SERPAPI_API_KEY || "";
   }
 
+  /**
+   * OFF by default, and it must stay off until the probe-delivery problem
+   * below is solved.
+   *
+   * Measured against the live engine: Bing returns 29 pages for an image URL
+   * its crawler can reach on the open web, and 0 for the serpapi.com upload
+   * URL this provider hands it -- that address 404s to anyone but SerpApi, so
+   * Bing never sees the picture. The engine works; our way of delivering the
+   * probe to it does not, and the failure is silent (HTTP 200, empty result),
+   * so switching it on spends a SerpApi call per scene search for nothing.
+   *
+   * Fixing it needs a publicly reachable probe URL -- an upload endpoint of
+   * our own, or an image host -- which is more than a provider change. Until
+   * then ENABLE_BING=true exists to test that work, not to run a demo.
+   */
   configured() {
+    if ((process.env.ENABLE_BING || "").toLowerCase() !== "true") return false;
     return this.key.length > 0;
   }
 

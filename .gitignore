@@ -24,3 +24,6 @@ playwright-report/
 # next.js auto-generated agent rule files
 AGENTS.md
 CLAUDE.md
+
+# local scratch: chat logs, task docs, anything not part of the app
+dustin/
