@@ -14,7 +14,7 @@ import sharp from "sharp";
  */
 export class MultiEngineAggregator implements SearchProvider {
   readonly id = "aggregator:lens_yandex";
-  readonly label = "SOTA Multi-Engine (Lens + Multi-Face)";
+  readonly label = "Multi-Engine (Lens + Multi-Face)";
 
   private lens = new SerpApiLens();
 

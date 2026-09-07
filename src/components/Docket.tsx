@@ -644,8 +644,8 @@ export function Docket() {
                 type="button"
                 onClick={() => setActiveFacet("all")}
                 className={`px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider border transition-colors ${activeFacet === "all"
-                    ? "border-amber bg-amber/20 text-amber font-semibold"
-                    : "border-rule text-dim hover:text-bone"
+                  ? "border-amber bg-amber/20 text-amber font-semibold"
+                  : "border-rule text-dim hover:text-bone"
                   }`}
               >
                 All Leads ({candidates.length})
@@ -666,8 +666,8 @@ export function Docket() {
                     type="button"
                     onClick={() => setActiveFacet(facet)}
                     className={`px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider border transition-colors ${activeFacet === facet
-                        ? "border-verdict bg-verdict/20 text-verdict font-semibold"
-                        : "border-rule text-dim hover:text-bone"
+                      ? "border-verdict bg-verdict/20 text-verdict font-semibold"
+                      : "border-rule text-dim hover:text-bone"
                       }`}
                   >
                     {label} ({count})
@@ -970,7 +970,7 @@ export function Docket() {
         <footer className="mt-4 border-t border-rule pt-6">
           <div className="flex flex-wrap items-baseline justify-between gap-x-8 gap-y-2">
             <span className="font-display text-[15px] tracking-[-0.01em] text-dim">
-              Facechain <span className="text-faint">— evidence console</span>
+              MugshotAI <span className="text-faint">— evidence console</span>
             </span>
             <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-faint">
               faceres 1024-d · keccak-256 · {status?.chain.label ?? "no chain"} · hh goa 2026
@@ -1015,7 +1015,7 @@ function BundleMetadataInspector({ bundle }: { bundle: EvidenceBundle }) {
       {
         key: "probeDescriptorSha256",
         label: "probeDescriptorSha256",
-        description: "Quantized probe 1024-d face embedding hash",
+        description: "Quantized probe 1024-d face descriptor hash",
         value: bundle.probeDescriptorSha256,
       },
       {
@@ -1052,7 +1052,7 @@ function BundleMetadataInspector({ bundle }: { bundle: EvidenceBundle }) {
       {
         key: "encoder",
         label: "encoder",
-        description: "Face descriptor model",
+        description: "Face descriptor encoder",
         value: bundle.encoder,
       },
       {
@@ -1110,8 +1110,8 @@ function BundleMetadataInspector({ bundle }: { bundle: EvidenceBundle }) {
                     type="button"
                     onClick={() => setViewMode("kv")}
                     className={`px-2 py-0.5 uppercase tracking-wider transition-colors ${viewMode === "kv"
-                        ? "bg-bench-hi text-amber border border-rule-hi"
-                        : "text-dim hover:text-bone"
+                      ? "bg-bench-hi text-amber border border-rule-hi"
+                      : "text-dim hover:text-bone"
                       }`}
                   >
                     Key-Value
@@ -1120,8 +1120,8 @@ function BundleMetadataInspector({ bundle }: { bundle: EvidenceBundle }) {
                     type="button"
                     onClick={() => setViewMode("json")}
                     className={`px-2 py-0.5 uppercase tracking-wider transition-colors ${viewMode === "json"
-                        ? "bg-bench-hi text-amber border border-rule-hi"
-                        : "text-dim hover:text-bone"
+                      ? "bg-bench-hi text-amber border border-rule-hi"
+                      : "text-dim hover:text-bone"
                       }`}
                   >
                     Raw JSON
@@ -1325,11 +1325,10 @@ function CandidateRow({
           <div className="mt-1 flex items-center justify-between gap-2">
             <p className="datum truncate">{c.source}</p>
             <span
-              className={`shrink-0 border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider ${
-                c.probeCategory?.startsWith("face_")
+              className={`shrink-0 border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider ${c.probeCategory?.startsWith("face_")
                   ? "border-verdict/60 bg-verdict/10 text-verdict font-semibold"
                   : "border-rule/60 bg-bench/60 text-dim"
-              }`}
+                }`}
             >
               {c.probeLabel ||
                 (c.probeCategory?.startsWith("face_")
@@ -1399,7 +1398,7 @@ function Masthead({ status }: { status: Status | null }) {
             <span className="h-px flex-1 bg-rule" aria-hidden />
           </span>
           <h1 className="mt-5 font-display text-[clamp(44px,9vw,86px)] font-normal leading-[0.92] tracking-[-0.02em]">
-            <ScatterText text="Facechain" />
+            <ScatterText text="MugshotAI" />
           </h1>
           <p className="mt-5 max-w-lg text-[15px] leading-relaxed text-dim">
             A face is scanned, traced to where it appears on the public web, and the finding is

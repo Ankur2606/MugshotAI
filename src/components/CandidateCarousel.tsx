@@ -114,7 +114,7 @@ export function CandidateCarousel({
                   />
                 ) : (
                   <div className="flex h-full w-full items-center justify-center bg-bench font-mono text-[10px] text-dim animate-pulse">
-                    Scanning Face...
+                    Scanning Specimen...
                   </div>
                 )}
 

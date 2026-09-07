@@ -14,7 +14,7 @@ import { loadEngine } from "@/lib/human-client";
 
 const STAGES: Record<string, number> = {
   "loading runtime": 0.18,
-  "loading models": 0.52,
+  "loading engine": 0.52,
   "warming up": 0.86,
   ready: 1,
 };
@@ -202,7 +202,7 @@ export function GateIntro({ onDone }: { onDone?: () => void }) {
               </motion.span>
 
               <span className="mt-4 flex overflow-hidden font-display text-[clamp(30px,9vw,48px)] leading-none tracking-[-0.02em] text-bone sm:text-[clamp(38px,6vw,64px)]">
-                {"Facechain".split("").map((ch, i) => (
+                {"MugshotAI".split("").map((ch, i) => (
                   <motion.span
                     key={i}
                     className="inline-block"

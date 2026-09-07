@@ -50,7 +50,7 @@ export function CyberIntelFootprint({ primaryUrl, targets = [] }: Props) {
         setReports([data]);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Intelligence crawl failed");
+      setError(err instanceof Error ? err.message : "Footprint crawl failed");
     } finally {
       setLoading(false);
     }
@@ -174,7 +174,7 @@ export function CyberIntelFootprint({ primaryUrl, targets = [] }: Props) {
           </span>
           <div>
             <h4 className="font-mono text-[12px] font-bold uppercase tracking-widest text-bone">
-              Cyber Intelligence // Deep Identity & Bio-Hub Radar
+              Digital Footprint // Identity & Bio-Hub Radar
             </h4>
             <p className="font-mono text-[10px] text-dim">
               Resolves post authors, commenters/tagged profiles, and recursive 1-hop bio hubs (Linktree, Beacons, Devfolio)

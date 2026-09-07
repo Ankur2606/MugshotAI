@@ -1,4 +1,4 @@
-# Facechain
+# MugshotAI
 
 > **Cryptographic Face Trace & Blockchain Registry**  
 > Scan a face, trace where it appears on the public web and social media, and seal the finding onto a blockchain as an immutable, tamper-evident record.
@@ -24,7 +24,7 @@ Built for cracked devs who gonna judge us for task 3
 
 The pipeline is split into four distinct stations operating across three security perimeters (Browser Client $\leftrightarrow$ Next.js Server $\leftrightarrow$ Blockchain Ledger).
 
-![Facechain Console](docs/console.png)
+![mugshotAI Console](docs/console.png)
 
 ---
 
@@ -35,7 +35,7 @@ The entire pipeline executes on a single interactive cyber-industrial console:
 ### Station I — Specimen (Browser Client)
 - **Zero-Trust Privacy**: Face detection and feature extraction run 100% client-side in the browser using WebGL and TensorFlow.js via [`@vladmandic/human`](https://github.com/vladmandic/human).
 - **Local Model Weights**: All 13 MB of model shards are served directly from `public/models/`. No webcam frames, user photos, or biometric vectors are ever sent to external CDNs or backends.
-- **Neural Pipeline**:
+- **Biometric Pipeline**:
   - **Detector**: BlazeFace locates bounding coordinates.
   - **Mesh & Geometry**: MediaPipe FaceMesh maps 468 3D facial landmarks and evaluates iris orientation.
   - **Feature Extractor**: FaceRes produces a **1024-dimensional deep unit vector descriptor**.
@@ -75,7 +75,7 @@ The entire pipeline executes on a single interactive cyber-industrial console:
 
 ## Supported Blockchains
 
-Facechain is multi-chain ready out of the box. Switching networks requires changing a single environment variable (`CHAIN_TARGET`) in `.env.local`:
+MugshotAI is multi-chain ready out of the box. Switching networks requires changing a single environment variable (`CHAIN_TARGET`) in `.env.local`:
 
 | Network | Chain ID | Target Value | Explorer | Ideal For |
 |---|:---:|:---:|---|---|
@@ -233,7 +233,7 @@ facechain/
 
 1. **Google Lens is an Image Search, not a Face Search**: Google Lens matches entire images (clothing, background, poses). It reliably finds indexed celebrities and social figures, but may return few results for private individuals. Station III (Adjudication) was specifically engineered to counteract this: the search engine proposes leads, but only the face encoder decides.
 2. **Server-Side Transaction Signing**: For demo convenience and reliable live recording, transactions are signed server-side using a key in `.env.local`. A production enterprise deployment would integrate an in-browser wallet (e.g. MetaMask / WalletConnect).
-3. **Instagram & Hotlinking Protection**: Certain social media CDNs aggressively block automated image scrapers. When an image cannot be retrieved, Facechain displays a clear "skipped" status rather than failing silently.
+3. **Instagram & Hotlinking Protection**: Certain social media CDNs aggressively block automated image scrapers. When an image cannot be retrieved, MugshotAI displays a clear "skipped" status rather than failing silently.
 4. **Integrity vs. Truth**: The blockchain proves that the evidence bundle has not been modified since the timestamp of the block. It proves data integrity; it does not claim to prove legal identity.
 
 ---

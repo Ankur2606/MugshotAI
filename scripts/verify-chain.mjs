@@ -10,7 +10,7 @@
  * order must produce the same digest, or re-verification is not reproducible.
  */
 
-const BASE = process.env.FACECHAIN_URL || "http://localhost:3000";
+const BASE = process.env.MUGSHOTAI_URL || process.env.FACECHAIN_URL || "http://localhost:3000";
 
 const nonce = Math.floor(Math.random() * 1e9).toString(16).padStart(8, "0");
 const B = {

@@ -22,7 +22,7 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Facechain — face to post to chain",
+  title: "MugshotAI — face to post to chain",
   description:
     "Scan a face, find where it appears on the web, and seal the finding to a blockchain as a tamper-evident record.",
 };

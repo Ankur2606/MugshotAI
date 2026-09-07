@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
     const report = await crawlConnectedIdentities(url, category, label, title);
     return NextResponse.json(report);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Intelligence crawl failed";
+    const message = error instanceof Error ? error.message : "Footprint crawl failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

@@ -64,7 +64,7 @@ export function loadEngine(onProgress?: (msg: string) => void): Promise<Human> {
     // left alone it resolves to the Node build and drags in tfjs-node.
     const { default: HumanCtor } = await import("@vladmandic/human");
     const human = new HumanCtor(probeConfig);
-    announce("loading models");
+    announce("loading engine");
     await human.load();
     announce("warming up");
     await human.warmup();

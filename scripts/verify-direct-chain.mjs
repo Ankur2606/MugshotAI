@@ -77,7 +77,7 @@ const contractAddress =
   deployments[target]?.address;
 
 console.log("=================================================");
-console.log("   FACECHAIN DIRECT ON-CHAIN VERIFICATION TOOL   ");
+console.log("   MUGSHOTAI DIRECT ON-CHAIN VERIFICATION TOOL   ");
 console.log("=================================================");
 console.log(`Network:          ${label}`);
 console.log(`RPC Endpoint:     ${rpcUrl}`);
