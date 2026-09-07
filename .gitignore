@@ -27,3 +27,6 @@ CLAUDE.md
 
 # local scratch: chat logs, task docs, anything not part of the app
 dustin/
+
+# local test probes (images pasted in for manual verification)
+testing/
