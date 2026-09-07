@@ -41,6 +41,7 @@ export function CyberIntelFootprint({ primaryUrl, targets = [] }: Props) {
             url: target.url,
             category: target.category,
             label: target.label,
+            title: target.title,
           }),
         });
 

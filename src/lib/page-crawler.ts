@@ -94,6 +94,13 @@ const RESERVED_USERNAMES = new Set([
   "opensearch", "oembed", "ads", "creators", "howyoutubeworks", "error_204",
   "csi_204", "ptracking", "generate_204", "t", "trends", "feed", "results",
   "playlist", "embed", "shared", "live", "premium", "music", "kids", "intl",
+  // GitHub global navigation paths, not user profiles.
+  "features", "security", "why-github", "marketplace", "enterprise", "team",
+  "solutions", "resources", "customer-stories", "orgs", "trust-center",
+  "topics", "trending", "collections", "open-source", "partners",
+  "mcp", "copilot",
+  // Devfolio navigation paths, not profile handles.
+  "projects", "hackathons", "community", "about", "guide",
 ]);
 
 /**
@@ -376,8 +383,17 @@ export function classifySocialUrl(urlStr: string): {
     const pathname = u.pathname.replace(/\/+$/, "");
     const parts = pathname.split("/").filter(Boolean);
 
-    // Devfolio: devfolio.co/@username
+    // Devfolio profile or project. Project pages are useful associated links,
+    // but must retain their real URL rather than becoming "@projects".
     if (host === "devfolio.co" || host.endsWith(".devfolio.co")) {
+      if (parts[0]?.toLowerCase() === "projects" && parts[1]) {
+        return {
+          platform: "devfolio",
+          platformName: "Devfolio",
+          handle: parts[1],
+          canonicalUrl: `https://devfolio.co/projects/${parts[1]}`,
+        };
+      }
       const handle = parts[0]?.replace(/^@/, "") || "";
       if (handle && !RESERVED_USERNAMES.has(handle.toLowerCase())) {
         return {
@@ -630,6 +646,83 @@ async function fetchHtml(targetUrl: string, timeoutMs = 7000): Promise<string> {
   }
 }
 
+const nameSearchCache = new Map<string, Promise<DiscoveredProfile[]>>();
+
+function displayNameFromTarget(title: string | undefined, targetUrl: string): string | null {
+  const fromTitle = title?.match(/\(([^)]+)\)/)?.[1] || title?.split(/\s+[|·-]\s+/)[0];
+  const fromUrl = (() => {
+    try {
+      const u = new URL(targetUrl);
+      const parts = u.pathname.split("/").filter(Boolean);
+      return parts[0] === "in" ? parts[1] : parts[0];
+    } catch {
+      return undefined;
+    }
+  })();
+  const value = (fromTitle || fromUrl || "").replace(/[._-]+/g, " ").trim();
+  if (!value || value.split(/\s+/).length < 2) return null;
+  return value;
+}
+
+async function searchNamedProfiles(
+  title: string | undefined,
+  targetUrl: string,
+  category?: string,
+  categoryLabel?: string,
+): Promise<DiscoveredProfile[]> {
+  const name = displayNameFromTarget(title, targetUrl);
+  const key = name?.toLowerCase();
+  const apiKey = process.env.SERPAPI_API_KEY;
+  if (!key || !name || !apiKey) return [];
+  const cached = nameSearchCache.get(key);
+  if (cached) {
+    return (await cached).map((profile) => ({ ...profile, category, categoryLabel }));
+  }
+
+  const request = (async () => {
+    const params = new URLSearchParams({
+      engine: "google",
+      q: `"${name}" site:devfolio.co`,
+      api_key: apiKey,
+      num: "20",
+      hl: "en",
+    });
+    try {
+      const res = await fetch(`https://serpapi.com/search?${params.toString()}`, {
+        signal: AbortSignal.timeout(12_000),
+      });
+      if (!res.ok) return [];
+      const json = (await res.json()) as {
+        organic_results?: Array<{ link?: string; title?: string; snippet?: string }>;
+      };
+      const normalizedName = name.toLowerCase().replace(/\s+/g, " ");
+      const profiles: DiscoveredProfile[] = [];
+      const seen = new Set<string>();
+      for (const result of json.organic_results ?? []) {
+        if (!result.link) continue;
+        const evidence = `${result.title ?? ""} ${result.snippet ?? ""}`.toLowerCase().replace(/\s+/g, " ");
+        if (!evidence.includes(normalizedName)) continue;
+        const classified = classifySocialUrl(result.link);
+        if (!classified || seen.has(classified.canonicalUrl)) continue;
+        seen.add(classified.canonicalUrl);
+        profiles.push({
+          platform: classified.platform,
+          platformName: classified.platformName,
+          url: classified.canonicalUrl,
+          handle: classified.handle,
+          source: "page",
+          roleLabel: "Exact-name search lead",
+        });
+      }
+      return profiles;
+    } catch {
+      return [];
+    }
+  })();
+  nameSearchCache.set(key, request);
+  return (await request).map((profile) => ({ ...profile, category, categoryLabel }));
+}
+
 /**
  * Executes a full cyber intelligence sweep for a target URL:
  * 1. Resolves post authors / primary subject profiles directly from URL
@@ -640,7 +733,8 @@ async function fetchHtml(targetUrl: string, timeoutMs = 7000): Promise<string> {
 export async function crawlConnectedIdentities(
   targetUrl: string,
   category?: string,
-  categoryLabel?: string
+  categoryLabel?: string,
+  title?: string,
 ): Promise<IntelReport> {
   const start = Date.now();
   const seenUrls = new Set<string>();
@@ -734,6 +828,18 @@ export async function crawlConnectedIdentities(
     }
   }
 
+  // A verified Lens page often has no outbound links. Use the displayed name
+  // as a constrained discovery query so Devfolio projects and public profiles
+  // are found, while requiring the exact name to appear in the result evidence.
+  const namedProfiles = await searchNamedProfiles(title, targetUrl, category, categoryLabel);
+  for (const profile of namedProfiles) {
+    const norm = profile.url.toLowerCase();
+    if (!seenUrls.has(norm)) {
+      seenUrls.add(norm);
+      profiles.push(profile);
+    }
+  }
+
   return {
     targetUrl,
     hubFound: hubUrl,
@@ -750,7 +856,7 @@ export async function crawlMultiCategoryIdentities(
   targets: TargetSpecimen[]
 ): Promise<IntelReport[]> {
   const tasks = targets.map((t) =>
-    crawlConnectedIdentities(t.url, t.category, t.label)
+    crawlConnectedIdentities(t.url, t.category, t.label, t.title)
   );
   const settled = await Promise.allSettled(tasks);
   const reports: IntelReport[] = [];
