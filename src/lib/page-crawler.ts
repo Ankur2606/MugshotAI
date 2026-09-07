@@ -88,7 +88,7 @@ const RESERVED_USERNAMES = new Set([
   "privacy", "terms", "blog", "jobs", "careers", "login", "signup", "register",
   "admin", "developer", "api", "docs", "settings", "search", "notifications",
   "in", "posts", "feed", "news", "status", "share", "intent", "p", "reel",
-  "company", "school", "learning", "pub", "pulse",
+  "company", "school", "learning", "pub", "pulse", "tos"
   // YouTube specific junk words
   "s", "desktop", "canvas", "webgl", "webgl2", "lite", "advanced", "wasm",
   "opensearch", "oembed", "ads", "creators", "howyoutubeworks", "error_204",
@@ -201,7 +201,7 @@ export function extractAuthorFromUrl(targetUrl: string): DiscoveredProfile | nul
         };
       }
     }
-  } catch {}
+  } catch { }
   return null;
 }
 
@@ -300,7 +300,7 @@ export async function extractPrimarySubjectFromUrl(targetUrl: string): Promise<D
 
             return discovered;
           }
-        } catch {}
+        } catch { }
 
         // Fallback for video
         discovered.push({
@@ -364,7 +364,7 @@ export async function extractPrimarySubjectFromUrl(targetUrl: string): Promise<D
         return discovered;
       }
     }
-  } catch {}
+  } catch { }
 
   return discovered;
 }
@@ -802,7 +802,7 @@ export async function crawlConnectedIdentities(
     if (BIO_HUB_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))) {
       hubUrl = normalizeCanonicalUrl(targetUrl);
     }
-  } catch {}
+  } catch { }
 
   // 4. Or if direct HTML contains a link to a bio hub
   if (!hubUrl && directHtml) {
