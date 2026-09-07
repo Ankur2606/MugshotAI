@@ -56,11 +56,11 @@ export async function GET(req: Request) {
    * unconditionally makes some hosts stricter, so it is the fallback rather
    * than the default.
    */
-  const attempt = (referer: string | null) =>
+  const attempt = (referer: string | null, ua: string = UA) =>
     fetch(parsed.toString(), {
       headers: {
         // Some CDNs refuse requests without a browser-shaped UA.
-        "User-Agent": UA,
+        "User-Agent": ua,
         Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
         ...(referer ? { Referer: referer } : {}),
       },
@@ -68,10 +68,26 @@ export async function GET(req: Request) {
       signal: AbortSignal.timeout(20_000),
     });
 
+  const isImage = (r: Response) =>
+    (r.headers.get("content-type") || "").startsWith("image/");
+
   try {
     let res = await attempt(null);
     if (!res.ok) {
       res = await attempt(parsed.origin + "/");
+    }
+
+    /**
+     * Meta's lookaside hosts serve the real bytes to a crawler and a tiny HTML
+     * stub to a browser — same URL, same 200. Retrying once as a crawler is
+     * cheaper than parsing the stub, and it costs a request only when the
+     * browser-shaped attempt already failed to produce an image.
+     */
+    if (res.ok && !isImage(res)) {
+      const asCrawler = await attempt(null, CRAWLER_UA).catch(() => null);
+      if (asCrawler?.ok && isImage(asCrawler)) {
+        res = asCrawler;
+      }
     }
 
     /**
@@ -94,7 +110,38 @@ export async function GET(req: Request) {
         redirect: "follow",
         signal: AbortSignal.timeout(20_000),
       }).catch(() => null);
-      const html = ((await page?.text()) ?? "").slice(0, 400_000);
+      let html = ((await page?.text()) ?? "").slice(0, 400_000);
+      let pageUrl = page?.url || res.url;
+
+      /**
+       * Some endpoints bounce via a script rather than a 3xx, so redirect:
+       * "follow" never sees it and we land on a stub with no meta tags at all.
+       * Follow one such hop by hand; one is enough to reach the real page and
+       * keeps a pair of stubs from bouncing us in circles.
+       */
+      const jsHop = html.match(
+        /(?:location\.(?:href|replace)\s*(?:=|\()\s*|<meta[^>]+http-equiv=["']refresh["'][^>]+content=["'][^"']*url=)["']?([^"'()\s>]+)/i,
+      );
+      if (jsHop && !/og:image|twitter:image/i.test(html)) {
+        try {
+          // JS string literals escape their slashes ("https:\/\/..."), so undo that.
+          const hop = new URL(jsHop[1].split("\\/").join("/"), pageUrl);
+          if (hop.protocol === "https:" || hop.protocol === "http:") {
+            const hopped = await fetch(hop.toString(), {
+              headers: { "User-Agent": CRAWLER_UA, Accept: "text/html,*/*" },
+              redirect: "follow",
+              signal: AbortSignal.timeout(20_000),
+            }).catch(() => null);
+            if (hopped?.ok) {
+              html = (await hopped.text()).slice(0, 400_000);
+              pageUrl = hopped.url;
+            }
+          }
+        } catch {
+          /* unparseable hop target, fall through to the og:image attempt */
+        }
+      }
+
       const og = html.match(
         /<meta[^>]+(?:property|name)=["'](?:og:image(?::secure_url)?|twitter:image)["'][^>]+content=["']([^"']+)["']/i,
       );
@@ -102,7 +149,7 @@ export async function GET(req: Request) {
       let found: URL | null = null;
       if (og) {
         try {
-          const u = new URL(decodeEntities(og[1]), page?.url || res.url);
+          const u = new URL(decodeEntities(og[1]), pageUrl);
           if (u.protocol === "https:" || u.protocol === "http:") found = u;
         } catch {
           /* unparseable og:image, treated as absent */
